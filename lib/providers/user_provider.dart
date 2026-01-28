@@ -39,6 +39,67 @@ class UserProvider with ChangeNotifier {
     }
   }
 
+  /// Login como convidado (sem autenticação)
+  Future<bool> loginAsGuest() async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      // Cria um usuário convidado temporário
+      final guestUser = User(
+        id: 'guest_${DateTime.now().millisecondsSinceEpoch}',
+        username: 'Jogador Convidado',
+        password: '', // Sem senha
+        currentXP: 0,
+        totalWins: 0,
+        totalMatches: 0,
+        joinDate: DateTime.now(),
+      );
+
+      // Simula delay de carregamento
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      await _authService.setGuestUser(guestUser);
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = 'Erro ao entrar como convidado: $e';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Registrar novo usuário
+  Future<bool> register(String username, String password) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final user = await _authService.register(username, password);
+      _isLoading = false;
+
+      if (user != null) {
+        // Auto-login após registro bem-sucedido
+        notifyListeners();
+        return true;
+      } else {
+        _errorMessage = 'Erro ao criar conta. Usuário já existe?';
+        notifyListeners();
+        return false;
+      }
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = 'Erro ao criar conta: $e';
+      notifyListeners();
+      return false;
+    }
+  }
+
   /// Logout user
   Future<void> logout() async {
     _isLoading = true;

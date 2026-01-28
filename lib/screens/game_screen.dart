@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
 import '../providers/user_provider.dart';
@@ -7,6 +8,8 @@ import '../models/game_session.dart';
 import '../utils/constants.dart';
 import 'home_screen.dart';
 
+/// Tela principal do jogo em andamento
+/// Implementa o Manager Mode com timer, blinds automáticos, eliminação, rebuys e dealer
 class GameScreen extends StatefulWidget {
   const GameScreen({Key? key}) : super(key: key);
 
@@ -15,35 +18,39 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> {
-  Timer? _timer;
-
   @override
   void initState() {
     super.initState();
-    _startTimer();
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  void _startTimer() {
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    // Verifica se o jogo acabou logo após iniciar (caso já tenha apenas 1 jogador)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       final gameProvider = Provider.of<GameProvider>(context, listen: false);
-      if (gameProvider.isGameActive) {
-        gameProvider.incrementTimer();
+      if (gameProvider.isGameFinished) {
+        _showGameOverDialog(gameProvider);
       }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        final confirm = await _showCancelConfirmation();
-        return confirm ?? false;
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (!didPop) {
+          final confirm = await _showCancelConfirmation();
+          if (confirm == true && mounted) {
+            final gameProvider = Provider.of<GameProvider>(
+              context,
+              listen: false,
+            );
+            await gameProvider.cancelGame();
+            if (mounted) {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const HomeScreen()),
+                (route) => false,
+              );
+            }
+          }
+        }
       },
       child: Scaffold(
         appBar: AppBar(
@@ -81,7 +88,7 @@ class _GameScreenState extends State<GameScreen> {
             // Check if game is finished
             if (gameProvider.isGameFinished) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                _showWinnerSelection(gameProvider);
+                _showGameOverDialog(gameProvider);
               });
             }
 
@@ -99,33 +106,74 @@ class _GameScreenState extends State<GameScreen> {
   Widget _buildManagerMode(GameProvider gameProvider, GameSession game) {
     return Column(
       children: [
-        // Timer and Blinds header
+        // Timer, Blinds e Próximo Nível
         _buildGameHeader(gameProvider),
 
-        // Players list
+        // Botão Rotacionar Dealer
+        Container(
+          padding: const EdgeInsets.all(12),
+          color: AppColors.darkGrey.withValues(alpha: 0.5),
+          child: ElevatedButton.icon(
+            onPressed: () => gameProvider.rotateDealer(),
+            icon: const Icon(Icons.casino, size: 20),
+            label: const Text('Rotacionar Dealer'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+          ),
+        ),
+
+        // Lista de Jogadores
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.all(16),
             itemCount: game.players.length,
             itemBuilder: (context, index) {
               final player = game.players[index];
+              final isDealer = gameProvider.dealerIndex == index;
 
               return Card(
                 color: player.isEliminated
-                    ? AppColors.darkGrey.withOpacity(0.5)
+                    ? AppColors.darkGrey.withValues(alpha: 0.5)
                     : AppColors.cardBackground,
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: player.isEliminated
-                        ? Colors.grey
-                        : AppColors.primary,
-                    child: player.isEliminated
-                        ? const Icon(Icons.close, color: Colors.white)
-                        : Text(
-                            player.username[0].toUpperCase(),
-                            style: AppTextStyles.bodyLarge,
+                  leading: Stack(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: player.isEliminated
+                            ? Colors.grey
+                            : AppColors.primary,
+                        child: player.isEliminated
+                            ? const Icon(Icons.close, color: Colors.white)
+                            : Text(
+                                player.username[0].toUpperCase(),
+                                style: AppTextStyles.bodyLarge,
+                              ),
+                      ),
+                      // Indicador de Dealer
+                      if (isDealer && !player.isEliminated)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: AppColors.gold,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Text(
+                              'D',
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
+                        ),
+                    ],
                   ),
                   title: Text(
                     player.username,
@@ -148,10 +196,21 @@ class _GameScreenState extends State<GameScreen> {
                       ? OutlinedButton.icon(
                           onPressed: () {
                             gameProvider.rebuyPlayer(player.userId);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  '${player.username} voltou ao jogo!',
+                                ),
+                                backgroundColor: AppColors.success,
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
                           },
                           icon: const Icon(Icons.replay, size: 16),
                           label: const Text('Rebuy'),
                           style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.success,
+                            side: const BorderSide(color: AppColors.success),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 12,
                               vertical: 8,
@@ -165,7 +224,11 @@ class _GameScreenState extends State<GameScreen> {
                             size: 32,
                           ),
                           onPressed: () {
-                            _confirmElimination(gameProvider, player.userId);
+                            _confirmElimination(
+                              gameProvider,
+                              player.userId,
+                              player.username,
+                            );
                           },
                         ),
                 ),
@@ -174,21 +237,33 @@ class _GameScreenState extends State<GameScreen> {
           ),
         ),
 
-        // Active players counter
+        // Contador de jogadores ativos e botão de teste
         Container(
           padding: const EdgeInsets.all(16),
           color: AppColors.darkGrey,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Column(
             children: [
-              const Icon(Icons.people, color: AppColors.gold),
-              const SizedBox(width: 8),
-              Text(
-                '${game.activePlayers.length} jogadores ativos',
-                style: AppTextStyles.bodyLarge.copyWith(
-                  color: AppColors.gold,
-                  fontWeight: FontWeight.bold,
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.people, color: AppColors.gold),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${game.activePlayers.length} jogadores ativos',
+                    style: AppTextStyles.bodyLarge.copyWith(
+                      color: AppColors.gold,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Botão de teste para forçar aumento de blinds (desenvolvimento)
+              TextButton.icon(
+                onPressed: () => gameProvider.increaseBlindsManually(),
+                icon: const Icon(Icons.fast_forward, size: 16),
+                label: const Text('Forçar Próximo Nível (Teste)'),
+                style: TextButton.styleFrom(foregroundColor: Colors.grey),
               ),
             ],
           ),
@@ -318,37 +393,100 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   Widget _buildGameHeader(GameProvider gameProvider) {
+    final nextBlind = gameProvider.nextBlindLevel;
+
     return Container(
       padding: const EdgeInsets.all(20),
-      color: AppColors.darkGrey,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppColors.darkGrey, AppColors.cardBackground],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: Column(
         children: [
-          // Timer
-          Column(
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              const Icon(Icons.timer, color: AppColors.gold, size: 32),
-              const SizedBox(height: 8),
-              Text(
-                gameProvider.formattedTime,
-                style: AppTextStyles.heading2.copyWith(color: AppColors.gold),
+              // Timer (Countdown)
+              Column(
+                children: [
+                  const Icon(Icons.timer, color: AppColors.gold, size: 32),
+                  const SizedBox(height: 8),
+                  Text(
+                    gameProvider.formattedTime,
+                    style: AppTextStyles.heading2.copyWith(
+                      color: gameProvider.remainingSeconds <= 60
+                          ? AppColors
+                                .error // Vermelho quando falta menos de 1 min
+                          : AppColors.gold,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    'Tempo Restante',
+                    style: AppTextStyles.caption.copyWith(fontSize: 12),
+                  ),
+                ],
               ),
-              Text('Tempo', style: AppTextStyles.caption),
+
+              // Blinds Atuais
+              Column(
+                children: [
+                  const Icon(
+                    Icons.attach_money,
+                    color: AppColors.gold,
+                    size: 32,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${gameProvider.currentSmallBlind}/${gameProvider.currentBigBlind}',
+                    style: AppTextStyles.heading2.copyWith(
+                      color: AppColors.gold,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    'Nível ${gameProvider.currentBlindLevel}',
+                    style: AppTextStyles.caption.copyWith(fontSize: 12),
+                  ),
+                ],
+              ),
             ],
           ),
 
-          // Blinds
-          Column(
-            children: [
-              const Icon(Icons.attach_money, color: AppColors.gold, size: 32),
-              const SizedBox(height: 8),
-              Text(
-                '${gameProvider.currentSmallBlind}/${gameProvider.currentBigBlind}',
-                style: AppTextStyles.heading2.copyWith(color: AppColors.gold),
+          // Próximo Nível de Blinds
+          if (nextBlind != null) ...[
+            const SizedBox(height: 12),
+            const Divider(color: Colors.white24, thickness: 1),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.arrow_upward, color: Colors.white70, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  'Próximo: ${nextBlind['small']}/${nextBlind['big']}',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: Colors.white70,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 12),
+            Text(
+              '⚠️ Nível Máximo Atingido',
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.warning,
+                fontWeight: FontWeight.bold,
               ),
-              Text('Blinds', style: AppTextStyles.caption),
-            ],
-          ),
+            ),
+          ],
         ],
       ),
     );
@@ -389,20 +527,31 @@ class _GameScreenState extends State<GameScreen> {
   Future<void> _confirmElimination(
     GameProvider gameProvider,
     String userId,
+    String playerName,
   ) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Confirmar Eliminação'),
-        content: const Text('Tem certeza que deseja eliminar este jogador?'),
+        backgroundColor: AppColors.cardBackground,
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: AppColors.warning),
+            const SizedBox(width: 8),
+            const Text('Confirmar Eliminação'),
+          ],
+        ),
+        content: Text(
+          'Tem certeza que deseja eliminar $playerName?',
+          style: AppTextStyles.bodyMedium,
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('Cancelar'),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
             child: const Text('Eliminar'),
           ),
         ],
@@ -411,66 +560,159 @@ class _GameScreenState extends State<GameScreen> {
 
     if (confirm == true) {
       await gameProvider.eliminatePlayer(userId);
-    }
-  }
-
-  Future<void> _showWinnerSelection(GameProvider gameProvider) async {
-    final game = gameProvider.currentGame;
-    if (game == null) return;
-
-    final winner = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Fim de Jogo!'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.emoji_events, color: AppColors.gold, size: 64),
-            const SizedBox(height: 16),
-            const Text('Quem venceu?', style: AppTextStyles.heading3),
-            const SizedBox(height: 16),
-            ...game.players.map((player) {
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: AppColors.primary,
-                  child: Text(player.username[0].toUpperCase()),
-                ),
-                title: Text(player.username),
-                onTap: () => Navigator.pop(context, player.userId),
-              );
-            }).toList(),
-          ],
-        ),
-      ),
-    );
-
-    if (winner != null && mounted) {
-      await gameProvider.finishGame(winner);
-
-      // Award XP to all players
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      for (final player in game.players) {
-        final isWinner = player.userId == winner;
-        // This is a simplified version - in production you'd update all users
-        if (player.userId == userProvider.currentUser?.id) {
-          await userProvider.recordMatch(isWinner);
-        }
-      }
 
       if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-          (route) => false,
-        );
+        // Vibração ao eliminar
+        HapticFeedback.mediumImpact();
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Jogo finalizado! XP atualizado.'),
-            backgroundColor: AppColors.success,
+          SnackBar(
+            content: Text('$playerName foi eliminado'),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 2),
           ),
         );
       }
+    }
+  }
+
+  /// Dialog de Game Over com celebração e distribuição de XP
+  Future<void> _showGameOverDialog(GameProvider gameProvider) async {
+    final game = gameProvider.currentGame;
+    if (game == null) return;
+
+    // Encontra o vencedor (último jogador ativo)
+    final winner = game.players.firstWhere((p) => !p.isEliminated);
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.cardBackground,
+        title: Column(
+          children: [
+            const Icon(Icons.emoji_events, color: AppColors.gold, size: 80),
+            const SizedBox(height: 16),
+            Text(
+              '🎉 Fim de Jogo! 🎉',
+              style: AppTextStyles.heading2.copyWith(color: AppColors.gold),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Divider(color: Colors.white24),
+            const SizedBox(height: 16),
+            Text(
+              'Vencedor:',
+              style: AppTextStyles.bodyMedium.copyWith(color: Colors.white70),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              winner.username,
+              style: AppTextStyles.heading1.copyWith(
+                color: AppColors.gold,
+                fontSize: 32,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.success.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.success, width: 2),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.star, color: AppColors.gold, size: 24),
+                  const SizedBox(width: 8),
+                  Text(
+                    '+500 XP',
+                    style: AppTextStyles.heading3.copyWith(
+                      color: AppColors.success,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _finishGameAndAwardXP(gameProvider, winner.userId);
+              },
+              icon: const Icon(Icons.home),
+              label: const Text('Voltar para Home'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Finaliza o jogo e distribui XP para todos os jogadores
+  Future<void> _finishGameAndAwardXP(
+    GameProvider gameProvider,
+    String winnerId,
+  ) async {
+    final game = gameProvider.currentGame;
+    if (game == null) return;
+
+    // Finaliza o jogo
+    await gameProvider.finishGame(winnerId);
+
+    // Distribui XP para todos os jogadores
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+
+    for (final player in game.players) {
+      final isWinner = player.userId == winnerId;
+
+      // Atualiza apenas o jogador atual (em produção, você enviaria para backend)
+      if (player.userId == userProvider.currentUser?.id) {
+        await userProvider.recordMatch(isWinner);
+      }
+    }
+
+    if (mounted) {
+      // Vibração de celebração
+      HapticFeedback.heavyImpact();
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (route) => false,
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Jogo finalizado! XP atualizado.',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.success,
+          duration: Duration(seconds: 3),
+        ),
+      );
     }
   }
 

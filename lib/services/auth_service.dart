@@ -103,6 +103,46 @@ class AuthService {
     }
   }
 
+  /// Set guest user (login without credentials)
+  Future<void> setGuestUser(User guestUser) async {
+    await Future.delayed(const Duration(milliseconds: 300));
+    _currentUser = guestUser;
+  }
+
+  /// Register new user
+  Future<User?> register(String username, String password) async {
+    // Simulate network delay
+    await Future.delayed(const Duration(milliseconds: 800));
+
+    // Verifica se o usuário já existe
+    final existingUser = _mockUsers.where(
+      (u) => u.username.toLowerCase() == username.toLowerCase(),
+    );
+
+    if (existingUser.isNotEmpty) {
+      return null; // Usuário já existe
+    }
+
+    // Cria novo usuário
+    final newUser = User(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      username: username,
+      password: password,
+      currentXP: 0,
+      totalWins: 0,
+      totalMatches: 0,
+      joinDate: DateTime.now(),
+    );
+
+    // Adiciona ao banco mock
+    _mockUsers.add(newUser);
+
+    // Auto-login
+    _currentUser = newUser;
+
+    return newUser;
+  }
+
   /// Logout current user
   Future<void> logout() async {
     await Future.delayed(const Duration(milliseconds: 300));
