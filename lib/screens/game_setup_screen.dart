@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
+import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
 import '../models/game_session.dart';
 import '../models/user.dart';
@@ -32,11 +33,16 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
 
   Future<void> _loadUsers() async {
     final firestoreService = FirestoreService();
-    // Subscribe to rankings to get all users
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final currentUserId = userProvider.currentUser?.id;
+
+    // Subscribe to rankings and filter out the current user
     firestoreService.getRankings().listen((users) {
       if (mounted) {
         setState(() {
-          _allUsers = users;
+          // CRITICAL FIX: Exclude Host from selectable players list
+          // Host is automatically included, so we only show other players
+          _allUsers = users.where((user) => user.id != currentUserId).toList();
           _isLoadingUsers = false;
         });
       }
