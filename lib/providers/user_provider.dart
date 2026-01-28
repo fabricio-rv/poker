@@ -1,216 +1,151 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import '../models/user.dart';
 import '../services/auth_service.dart';
+import '../services/firestore_service.dart';
 
 class UserProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
+  final FirestoreService _firestoreService = FirestoreService();
 
-  User? get currentUser => _authService.currentUser;
-  bool get isLoggedIn => _authService.isLoggedIn;
+  User? _currentUser;
   bool _isLoading = false;
   String? _errorMessage;
 
+  User? get currentUser => _currentUser;
   bool get isLoading => _isLoading;
+  bool get isLoggedIn => _currentUser != null;
   String? get errorMessage => _errorMessage;
 
-  /// Login user
-  Future<bool> login(String username, String password) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
+  UserProvider() {
+    _initAuthListener();
+  }
 
-    try {
-      final user = await _authService.login(username, password);
-      _isLoading = false;
-
-      if (user != null) {
-        notifyListeners();
-        return true;
+  void _initAuthListener() {
+    firebase_auth.FirebaseAuth.instance.authStateChanges().listen((
+      firebaseUser,
+    ) async {
+      if (firebaseUser != null) {
+        await refreshUser();
       } else {
-        _errorMessage = 'Usuário ou senha incorretos';
+        _currentUser = null;
         notifyListeners();
-        return false;
       }
-    } catch (e) {
-      _isLoading = false;
-      _errorMessage = 'Erro ao fazer login: $e';
-      notifyListeners();
-      return false;
+    });
+  }
+
+  Future<void> refreshUser() async {
+    final firebaseUser = firebase_auth.FirebaseAuth.instance.currentUser;
+    if (firebaseUser != null) {
+      await _loadUserFromFirestore(firebaseUser.uid);
     }
   }
 
-  /// Login como convidado (sem autenticação)
-  Future<bool> loginAsGuest() async {
+  Future<void> _loadUserFromFirestore(String uid) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      // Cria um usuário convidado temporário
-      final guestUser = User(
-        id: 'guest_${DateTime.now().millisecondsSinceEpoch}',
-        username: 'Jogador Convidado',
-        password: '', // Sem senha
-        currentXP: 0,
-        totalWins: 0,
-        totalMatches: 0,
-        joinDate: DateTime.now(),
-      );
+      var user = await _firestoreService.getUser(uid);
 
-      // Simula delay de carregamento
-      await Future.delayed(const Duration(milliseconds: 500));
+      // Tenta novamente após 1 segundo se não achar (ajuda no primeiro cadastro)
+      if (user == null) {
+        await Future.delayed(const Duration(seconds: 1));
+        user = await _firestoreService.getUser(uid);
+      }
 
-      await _authService.setGuestUser(guestUser);
-
+      if (user != null) {
+        _currentUser = user;
+      } else {
+        _errorMessage = "Perfil não encontrado no servidor.";
+      }
+    } catch (e) {
+      _errorMessage = "Erro ao carregar dados: $e";
+    } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  // CORREÇÃO: Chamada usando parâmetros posicionais ou nomeados conforme seu AuthService
+  Future<bool> login(String email, String password) async {
+    _isLoading = true;
+    notifyListeners();
+
+    // Se o seu AuthService.signIn usar parâmetros nomeados:
+    final result = await _authService.signIn(email: email, password: password);
+
+    if (result['success']) {
+      await _loadUserFromFirestore(result['uid']);
       return true;
-    } catch (e) {
+    } else {
+      _errorMessage = result['message'];
       _isLoading = false;
-      _errorMessage = 'Erro ao entrar como convidado: $e';
       notifyListeners();
       return false;
     }
   }
 
-  /// Registrar novo usuário
-  Future<bool> register(String username, String password) async {
+  Future<bool> register(String email, String password, String name) async {
     _isLoading = true;
-    _errorMessage = null;
     notifyListeners();
 
-    try {
-      final user = await _authService.register(username, password);
-      _isLoading = false;
+    final result = await _authService.signUp(email, password, name);
 
-      if (user != null) {
-        // Auto-login após registro bem-sucedido
-        notifyListeners();
-        return true;
-      } else {
-        _errorMessage = 'Erro ao criar conta. Usuário já existe?';
-        notifyListeners();
-        return false;
-      }
-    } catch (e) {
+    if (result['success']) {
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _loadUserFromFirestore(result['uid']);
+      return true;
+    } else {
+      _errorMessage = result['message'];
       _isLoading = false;
-      _errorMessage = 'Erro ao criar conta: $e';
       notifyListeners();
       return false;
     }
   }
 
-  /// Logout user
   Future<void> logout() async {
-    _isLoading = true;
+    await _authService.signOut();
+    _currentUser = null;
     notifyListeners();
-
-    try {
-      await _authService.logout();
-      _isLoading = false;
-      _errorMessage = null;
-      notifyListeners();
-    } catch (e) {
-      _isLoading = false;
-      _errorMessage = 'Erro ao sair: $e';
-      notifyListeners();
-    }
   }
 
-  /// Update user profile (username and/or password)
-  Future<bool> updateProfile({String? username, String? newPassword}) async {
-    if (currentUser == null) return false;
-
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
+  Future<bool> updateProfile(String name, String? avatarUrl) async {
+    if (_currentUser == null) return false;
     try {
-      // Criar usuário atualizado com novos dados
-      final updatedUser = currentUser!.copyWith(
-        username: username ?? currentUser!.username,
-        password: newPassword ?? currentUser!.password,
-      );
-
-      await _authService.updateUser(updatedUser);
-      _isLoading = false;
-      notifyListeners();
+      await _firestoreService.updateUser(_currentUser!.id, {
+        'username': name,
+        'name': name,
+        if (avatarUrl != null) 'avatarUrl': avatarUrl,
+        if (avatarUrl != null) 'photoUrl': avatarUrl,
+      });
+      await refreshUser();
       return true;
     } catch (e) {
-      _isLoading = false;
-      _errorMessage = 'Erro ao atualizar perfil: $e';
+      _errorMessage = 'Erro ao atualizar: $e';
       notifyListeners();
       return false;
     }
   }
 
-  /// Add XP to current user
-  Future<void> addXP(int amount) async {
-    if (currentUser == null) return;
-
-    try {
-      await _authService.addXP(currentUser!.id, amount);
-      notifyListeners();
-    } catch (e) {
-      _errorMessage = 'Erro ao adicionar XP: $e';
-      notifyListeners();
-    }
-  }
-
-  /// Record a match result for current user
+  /// Record match result
   Future<void> recordMatch(bool isWinner) async {
-    if (currentUser == null) return;
-
-    _isLoading = true;
-    notifyListeners();
+    if (_currentUser == null) return;
 
     try {
-      await _authService.recordMatch(currentUser!.id, isWinner);
-      _isLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _isLoading = false;
-      _errorMessage = 'Erro ao registrar partida: $e';
-      notifyListeners();
-    }
-  }
-
-  /// TASK 1: Complete a match with strict XP rewards
-  /// Winner: +500 XP, increment victories and matchesPlayed
-  /// Loser: +100 XP (participation), increment matchesPlayed only
-  Future<void> completeMatch({required bool isWinner}) async {
-    if (currentUser == null) return;
-
-    try {
-      // Calculate XP reward based on result
-      final xpReward = isWinner ? 500 : 100;
-      final newXP = currentUser!.currentXP + xpReward;
-      final newWins = isWinner
-          ? currentUser!.totalWins + 1
-          : currentUser!.totalWins;
-      final newMatches = currentUser!.totalMatches + 1;
-
-      // Create updated user with new stats
-      final updatedUser = currentUser!.copyWith(
-        currentXP: newXP,
-        totalWins: newWins,
-        totalMatches: newMatches,
+      await _firestoreService.recordMatchResult(
+        uid: _currentUser!.id,
+        isWinner: isWinner,
       );
-
-      // Update via auth service
-      await _authService.updateUser(updatedUser);
-
-      // Notify listeners to update UI immediately
-      notifyListeners();
+      await refreshUser();
     } catch (e) {
-      _errorMessage = 'Erro ao registrar partida: $e';
-      notifyListeners();
+      print('Error recording match: $e');
     }
   }
 
-  /// Clear error message
-  void clearError() {
-    _errorMessage = null;
-    notifyListeners();
+  /// Complete match (alias for recordMatch)
+  Future<void> completeMatch({required bool isWinner}) async {
+    await recordMatch(isWinner);
   }
 }

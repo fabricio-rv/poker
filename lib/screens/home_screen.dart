@@ -13,6 +13,9 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Usamos watch para que a tela reconstrua sempre que o estado do UserProvider mudar
+    final userProvider = context.watch<UserProvider>();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Home'),
@@ -31,74 +34,115 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Consumer<UserProvider>(
-        builder: (context, userProvider, child) {
-          final user = userProvider.currentUser;
+      body: _buildBody(context, userProvider),
+    );
+  }
 
-          if (user == null) {
-            return const Center(child: Text('Erro: Usuário não encontrado'));
-          }
+  Widget _buildBody(BuildContext context, UserProvider userProvider) {
+    final user = userProvider.currentUser;
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Header with greeting
-                Text('Olá, ${user.username}!', style: AppTextStyles.heading1),
-                const SizedBox(height: 24),
+    // 1. ESTADO DE CARREGAMENTO: Evita mostrar erro enquanto o Firebase busca os dados
+    if (userProvider.isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      );
+    }
 
-                // XP Progress Card
-                XPProgressWidget(user: user),
-                const SizedBox(height: 32),
-
-                // Menu Cards
-                _buildMenuCard(
-                  context,
-                  title: 'INICIAR JOGO',
-                  icon: Icons.play_circle_filled,
-                  color: AppColors.primary,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const GameSetupScreen(),
-                      ),
-                    );
-                  },
+    // 2. TRATAMENTO DE ERRO: Caso o documento realmente não exista no Firestore
+    if (user == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: AppColors.error),
+              const SizedBox(height: 16),
+              const Text(
+                'Perfil não encontrado',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
                 ),
-                const SizedBox(height: 16),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Houve um atraso na sincronização com o banco de dados.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => userProvider.refreshUser(),
+                child: const Text('TENTAR NOVAMENTE'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
-                _buildMenuCard(
-                  context,
-                  title: 'RANKING',
-                  icon: Icons.emoji_events,
-                  color: AppColors.gold,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const RankingScreen()),
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
+    // 3. LAYOUT PRINCIPAL: Exibido apenas quando o usuário é carregado com sucesso
+    return RefreshIndicator(
+      onRefresh: () => userProvider.refreshUser(),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header: O campo corrigido é user.name (ou o campo que você definiu no Model)
+            Text('Olá, ${user.username}!', style: AppTextStyles.heading1),
+            const SizedBox(height: 24),
 
-                _buildMenuCard(
+            // XP Progress Card
+            XPProgressWidget(user: user),
+            const SizedBox(height: 32),
+
+            // Menu Cards
+            _buildMenuCard(
+              context,
+              title: 'INICIAR JOGO',
+              icon: Icons.play_circle_filled,
+              color: AppColors.primary,
+              onTap: () {
+                Navigator.push(
                   context,
-                  title: 'PERFIL & CONQUISTAS',
-                  icon: Icons.person,
-                  color: AppColors.darkGrey,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const ProfileScreen()),
-                    );
-                  },
-                ),
-              ],
+                  MaterialPageRoute(builder: (_) => const GameSetupScreen()),
+                );
+              },
             ),
-          );
-        },
+            const SizedBox(height: 16),
+
+            _buildMenuCard(
+              context,
+              title: 'RANKING',
+              icon: Icons.emoji_events,
+              color: AppColors.gold,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const RankingScreen()),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
+            _buildMenuCard(
+              context,
+              title: 'PERFIL & CONQUISTAS',
+              icon: Icons.person,
+              color: AppColors.darkGrey,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -112,6 +156,8 @@ class HomeScreen extends StatelessWidget {
   }) {
     return Card(
       color: color,
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
@@ -121,8 +167,19 @@ class HomeScreen extends StatelessWidget {
             children: [
               Icon(icon, size: 48, color: AppColors.white),
               const SizedBox(width: 24),
-              Expanded(child: Text(title, style: AppTextStyles.heading2)),
-              const Icon(Icons.arrow_forward_ios, color: AppColors.white),
+              Expanded(
+                child: Text(
+                  title,
+                  style: AppTextStyles.heading2.copyWith(
+                    color: AppColors.white,
+                  ),
+                ),
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: AppColors.white,
+                size: 16,
+              ),
             ],
           ),
         ),

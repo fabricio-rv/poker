@@ -48,40 +48,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final newUsername = _usernameController.text.trim();
-      final currentPassword = _currentPasswordController.text;
-      final newPassword = _newPasswordController.text;
 
-      // Validar senha atual se estiver tentando mudar a senha
-      if (newPassword.isNotEmpty) {
-        if (currentPassword.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Digite a senha atual para alterá-la'),
-              backgroundColor: AppColors.error,
-            ),
-          );
-          setState(() => _isLoading = false);
-          return;
-        }
-
-        // TODO: Validar senha atual com o AuthService
-        // Por enquanto, aceita qualquer senha como demonstração
-      }
-
-      // Atualizar perfil
-      await userProvider.updateProfile(
-        username: newUsername,
-        newPassword: newPassword.isEmpty ? null : newPassword,
+      // Update profile (name and optionally avatar)
+      final success = await userProvider.updateProfile(
+        newUsername,
+        null, // avatarUrl - could be added later
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Perfil atualizado com sucesso!'),
-            backgroundColor: AppColors.success,
-          ),
-        );
-        Navigator.pop(context);
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Perfil atualizado com sucesso!'),
+              backgroundColor: AppColors.success,
+            ),
+          );
+          Navigator.pop(context);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Erro ao atualizar perfil'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {

@@ -125,7 +125,7 @@ class ProfileScreen extends StatelessWidget {
                         const Divider(),
                         _buildInfoRow(
                           'XP até próximo nível',
-                          '${user.xpForNextLevel - user.currentXP}',
+                          '${1000 - (user.currentXP % 1000)}',
                         ),
                       ],
                     ),

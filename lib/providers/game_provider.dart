@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import '../models/game_session.dart';
 import '../models/player_in_game.dart';
 import '../models/chip_config.dart';
@@ -8,11 +9,22 @@ import '../models/user.dart';
 import '../services/game_service.dart';
 import '../services/chip_calculator_service.dart';
 import '../services/poker_logic_service.dart';
+import '../services/firestore_service.dart';
 
 /// Provider principal para gerenciamento de estado do jogo de poker
 /// Implementa toda a lógica de temporização, blinds, eliminação e rebuys
+/// NOW WITH FIREBASE INTEGRATION - Real-time sync with Firestore
 class GameProvider with ChangeNotifier {
   final GameService _gameService = GameService();
+  final FirestoreService _firestoreService = FirestoreService();
+
+  // Firebase Auth state
+  firebase_auth.User? _firebaseUser;
+  StreamSubscription<firebase_auth.User?>? _authSubscription;
+
+  // Firebase session stream
+  String? _activeSessionId;
+  StreamSubscription<GameSession?>? _sessionSubscription;
 
   // ========== Estado de Configuração do Jogo ==========
   GameMode? _selectedMode;
@@ -73,6 +85,12 @@ class GameProvider with ChangeNotifier {
 
   bool get isGameActive => _currentGame != null;
   bool get isGameFinished => _currentGame?.isFinished ?? false;
+  firebase_auth.User? get firebaseUser => _firebaseUser;
+
+  // Constructor - Initialize Firebase auth listener
+  GameProvider() {
+    _initAuthListener();
+  }
 
   /// Retorna o próximo nível de blinds (ou null se já estiver no último)
   Map<String, int>? get nextBlindLevel {
@@ -154,21 +172,41 @@ class GameProvider with ChangeNotifier {
   // ========== Iniciar Jogo ==========
 
   /// Inicia um novo jogo e começa o timer de blinds
+  /// NOW WITH FIREBASE: Creates session in Firestore
   Future<void> startGame() async {
     if (_selectedMode == null ||
         _selectedPlayers.isEmpty ||
-        _calculatedChips == null) {
+        _calculatedChips == null ||
+        _firebaseUser == null) {
       return;
     }
 
-    final players = _selectedPlayers.map((user) {
-      return PlayerInGame(
-        userId: user.id,
-        username: user.username,
-        initialChips: _calculatedChips!,
-      );
-    }).toList();
+    // Get Host user data from Firestore
+    final hostUser = await _firestoreService.getUser(_firebaseUser!.uid);
+    if (hostUser == null) {
+      debugPrint('Erro: não foi possível carregar dados do Host');
+      return;
+    }
 
+    // Create players list including Host + selected players
+    final players = <PlayerInGame>[
+      // Add Host first
+      PlayerInGame(
+        userId: hostUser.id,
+        username: hostUser.username,
+        initialChips: _calculatedChips!,
+      ),
+      // Add selected players
+      ..._selectedPlayers.map((user) {
+        return PlayerInGame(
+          userId: user.id,
+          username: user.username,
+          initialChips: _calculatedChips!,
+        );
+      }),
+    ];
+
+    // Create local game session
     _currentGame = await _gameService.createGame(
       players: players,
       gameMode: _selectedMode!,
@@ -176,6 +214,16 @@ class GameProvider with ChangeNotifier {
       buyInAmount: _buyInAmount,
       isProgressiveBlind: _isProgressiveBlind,
     );
+
+    // Create session in Firebase
+    if (_currentGame != null) {
+      final sessionId = await _firestoreService.createSession(_currentGame!);
+      if (sessionId != null) {
+        _activeSessionId = sessionId;
+        // Subscribe to real-time updates
+        await joinSession(sessionId);
+      }
+    }
 
     // Reset e inicia timer de blinds
     _remainingSeconds = 1200; // 20 minutos
@@ -275,8 +323,13 @@ class GameProvider with ChangeNotifier {
       'º lugar',
     );
 
-    // Atualiza no serviço
+    // Atualiza no serviço (local)
     await _gameService.eliminatePlayer(userId);
+
+    // CRITICAL MULTIPLAYER FIX: Sync elimination to Firestore so all participants see it
+    if (_activeSessionId != null) {
+      await _firestoreService.eliminatePlayer(_activeSessionId!, userId);
+    }
 
     // O jogo acabou automaticamente quando remainingPlayers == 1
     // (isFinished é um getter que verifica activePlayers.length)
@@ -309,7 +362,7 @@ class GameProvider with ChangeNotifier {
   // ========== Dealer ==========
 
   /// Rotaciona o dealer para o próximo jogador ativo
-  void rotateDealer() {
+  Future<void> rotateDealer() async {
     if (_currentGame == null || _currentGame!.players.isEmpty) return;
 
     final activePlayers = _currentGame!.players
@@ -336,6 +389,12 @@ class GameProvider with ChangeNotifier {
     debugPrint(
       '🃏 Dealer rotacionado para: ${_currentGame!.players[_dealerIndex].username}',
     );
+
+    // CRITICAL MULTIPLAYER FIX: Sync dealer to Firestore so all participants see it
+    if (_activeSessionId != null) {
+      await _firestoreService.updateDealer(_activeSessionId!, _dealerIndex);
+    }
+
     notifyListeners();
   }
 
@@ -511,6 +570,99 @@ class GameProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  // ========== FIREBASE INTEGRATION ==========
+
+  /// Initialize Firebase Auth listener
+  /// Keeps user logged in across app restarts
+  void _initAuthListener() {
+    _authSubscription = firebase_auth.FirebaseAuth.instance
+        .authStateChanges()
+        .listen((firebase_auth.User? user) {
+          _firebaseUser = user;
+          notifyListeners();
+        });
+  }
+
+  /// Join or create a real-time game session
+  /// Subscribes to Firestore stream for automatic UI updates
+  Future<void> joinSession(String sessionId) async {
+    _activeSessionId = sessionId;
+
+    // Cancel previous subscription if any
+    await _sessionSubscription?.cancel();
+
+    // Listen to session changes in real-time
+    _sessionSubscription = _firestoreService.sessionStream(sessionId).listen((
+      GameSession? session,
+    ) {
+      if (session != null) {
+        // Update game session
+        _currentGame = session;
+
+        // CRITICAL: Sync all game state from Firestore to local state
+        // This ensures all participants see the same game state in real-time
+
+        // Sync dealer position (changes when host rotates dealer)
+        if (_dealerIndex != session.dealerIndex) {
+          _dealerIndex = session.dealerIndex;
+        }
+
+        // Board cards are now part of GameSession model
+        // All participants automatically see board card updates through _currentGame
+        // No need to sync to local variables - read from session.boardCards instead
+
+        notifyListeners();
+      }
+    });
+  }
+
+  /// Update board cards in Firestore (Host only)
+  /// All clients will see this change in real-time
+  Future<void> updateBoardCards(List<String> cards) async {
+    if (_activeSessionId != null) {
+      await _firestoreService.updateBoard(_activeSessionId!, cards);
+    }
+  }
+
+  /// End game and distribute XP to winner
+  Future<void> endGameWithFirebase({required String winnerId}) async {
+    if (_currentGame == null || _activeSessionId == null) return;
+
+    try {
+      // 1. Distribute XP to all players atomically (batch write)
+      final participantIds = _currentGame!.players
+          .map((p) => p.userId)
+          .toList();
+      await _firestoreService.recordMatchResultsBatch(
+        winnerId: winnerId,
+        participantIds: participantIds,
+      );
+
+      // 2. Mark session as finished
+      await _firestoreService.updateGameStatus(_activeSessionId!, 'finished');
+
+      // 3. Update local state
+      _currentGame = _currentGame!.copyWith(
+        isCompleted: true,
+        winnerId: winnerId,
+      );
+
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error ending game: $e');
+      rethrow; // Critical error - caller should handle
+    }
+  }
+
+  /// Leave current session
+  Future<void> leaveSession() async {
+    await _sessionSubscription?.cancel();
+    _sessionSubscription = null;
+    _activeSessionId = null;
+    _currentGame = null;
+    notifyListeners();
+  }
+
   // ========== Helpers ==========
 
   void _resetSetup() {
@@ -535,6 +687,8 @@ class GameProvider with ChangeNotifier {
   @override
   void dispose() {
     _blindTimer?.cancel();
+    _authSubscription?.cancel();
+    _sessionSubscription?.cancel();
     super.dispose();
   }
 }

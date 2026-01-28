@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
-import '../services/auth_service.dart';
+import '../services/firestore_service.dart';
 import '../models/game_session.dart';
 import '../models/user.dart';
 import '../utils/constants.dart';
@@ -31,11 +31,15 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
   }
 
   Future<void> _loadUsers() async {
-    final authService = AuthService();
-    final users = await authService.getAllUsers();
-    setState(() {
-      _allUsers = users;
-      _isLoadingUsers = false;
+    final firestoreService = FirestoreService();
+    // Subscribe to rankings to get all users
+    firestoreService.getRankings().listen((users) {
+      if (mounted) {
+        setState(() {
+          _allUsers = users;
+          _isLoadingUsers = false;
+        });
+      }
     });
   }
 
@@ -323,7 +327,9 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
         Padding(
           padding: const EdgeInsets.all(16),
           child: Text(
-            '${gameProvider.selectedPlayers.length} jogador(es) selecionado(s)',
+            gameProvider.selectedPlayers.isEmpty
+                ? 'Nenhum jogador selecionado'
+                : 'Você (Host) + ${gameProvider.selectedPlayers.length} jogador(es) = ${gameProvider.selectedPlayers.length + 1} total',
             style: AppTextStyles.bodyLarge.copyWith(
               color: gameProvider.selectedPlayers.length >= 2
                   ? AppColors.success
@@ -353,7 +359,9 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
       );
     }
 
-    final playerCount = gameProvider.selectedPlayers.length;
+    // Distribuição de fichas (inclui Host + jogadores selecionados)
+    final playerCount =
+        gameProvider.selectedPlayers.length + 1; // +1 para o Host
     final totalChipsPerPlayer = 200;
     final chipsPerPlayer = totalChipsPerPlayer ~/ playerCount;
 

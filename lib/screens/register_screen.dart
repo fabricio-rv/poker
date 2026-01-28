@@ -14,7 +14,8 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   bool _obscurePassword = true;
@@ -23,7 +24,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   void dispose() {
-    _usernameController.dispose();
+    _nameController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
@@ -37,10 +39,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     final userProvider = Provider.of<UserProvider>(context, listen: false);
 
-    // Simula registro (em produção, chamaria userProvider.register())
     final success = await userProvider.register(
-      _usernameController.text.trim(),
+      _emailController.text.trim(),
       _passwordController.text,
+      _nameController.text.trim(),
     );
 
     if (mounted) {
@@ -145,12 +147,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 40),
 
-                    // Campo: Nome de Usuário
+                    // Campo: Nome
                     TextFormField(
-                      controller: _usernameController,
+                      controller: _nameController,
                       decoration: InputDecoration(
-                        labelText: 'Nome de Usuário',
-                        hintText: 'Escolha um nome único',
+                        labelText: 'Nome',
+                        hintText: 'Seu nome',
                         prefixIcon: const Icon(Icons.person_outline),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -161,19 +163,39 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       textInputAction: TextInputAction.next,
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) {
-                          return 'Por favor, insira um nome de usuário';
+                          return 'Por favor, insira seu nome';
                         }
                         if (value.trim().length < 3) {
                           return 'O nome deve ter pelo menos 3 caracteres';
                         }
-                        if (value.trim().length > 20) {
-                          return 'O nome não pode ter mais de 20 caracteres';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Campo: Email
+                    TextFormField(
+                      controller: _emailController,
+                      decoration: InputDecoration(
+                        labelText: 'Email',
+                        hintText: 'seu@email.com',
+                        prefixIcon: const Icon(Icons.email_outlined),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: AppColors.cardBackground,
+                      ),
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Por favor, insira um email';
                         }
-                        // Validação de caracteres permitidos
                         if (!RegExp(
-                          r'^[a-zA-Z0-9_]+$',
+                          r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
                         ).hasMatch(value.trim())) {
-                          return 'Use apenas letras, números e underscore';
+                          return 'Email inválido';
                         }
                         return null;
                       },

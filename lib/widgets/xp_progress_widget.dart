@@ -150,7 +150,7 @@ class _XPProgressWidgetState extends State<XPProgressWidget>
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '${user.currentXP - user.xpForCurrentLevel} / ${user.xpForNextLevel - user.xpForCurrentLevel} XP',
+                  '${user.currentXP % 1000} / 1000 XP',
                   style: AppTextStyles.caption,
                   textAlign: TextAlign.center,
                 ),

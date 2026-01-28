@@ -1,106 +1,78 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'dart:async';
 import '../models/user.dart';
-import '../services/auth_service.dart';
+import '../services/firestore_service.dart';
 
 enum RankingCategory { overall, wins, xp, matches }
 
 class RankingProvider with ChangeNotifier {
-  final AuthService _authService = AuthService();
+  final FirestoreService _firestoreService = FirestoreService();
 
-  List<User> _allUsers = [];
-  List<User> _rankedUsers = [];
-  RankingCategory _currentCategory = RankingCategory.overall;
+  List<User> _users = [];
   bool _isLoading = false;
+  RankingCategory _currentCategory = RankingCategory.overall;
+  StreamSubscription<List<User>>? _rankingSubscription;
 
-  List<User> get rankedUsers => _rankedUsers;
-  RankingCategory get currentCategory => _currentCategory;
+  List<User> get users => _users;
   bool get isLoading => _isLoading;
+  RankingCategory get currentCategory => _currentCategory;
 
-  /// Load all users and calculate rankings
-  Future<void> loadRankings() async {
+  RankingProvider() {
+    loadRankings();
+  }
+
+  /// Load rankings from Firestore with real-time updates
+  void loadRankings() {
     _isLoading = true;
     notifyListeners();
 
-    try {
-      _allUsers = await _authService.getAllUsers();
-      _sortByCategory(_currentCategory);
-      _isLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _isLoading = false;
-      notifyListeners();
-    }
+    _rankingSubscription?.cancel();
+    _rankingSubscription = _firestoreService.getRankings().listen(
+      (users) {
+        _users = users;
+        _isLoading = false;
+        notifyListeners();
+      },
+      onError: (error) {
+        print('Error loading rankings: $error');
+        _isLoading = false;
+        notifyListeners();
+      },
+    );
   }
 
-  /// Change ranking category and resort
+  /// Change ranking category
   void changeCategory(RankingCategory category) {
     _currentCategory = category;
-    _sortByCategory(category);
+    _sortUsersByCategory();
     notifyListeners();
   }
 
-  /// Sort users by selected category
-  void _sortByCategory(RankingCategory category) {
-    switch (category) {
+  /// Sort users by current category
+  void _sortUsersByCategory() {
+    switch (_currentCategory) {
       case RankingCategory.overall:
-        // TASK 2: Sort by Level (desc), then TotalXP (desc), then Victories (desc)
-        _rankedUsers = List.from(_allUsers)
-          ..sort((a, b) {
-            // First compare by level
-            final levelCompare = b.level.compareTo(a.level);
-            if (levelCompare != 0) return levelCompare;
-
-            // If levels are equal, compare by total XP
-            final xpCompare = b.currentXP.compareTo(a.currentXP);
-            if (xpCompare != 0) return xpCompare;
-
-            // If XP is also equal, compare by victories
-            return b.totalWins.compareTo(a.totalWins);
-          });
+        _users.sort((a, b) => b.rankingScore.compareTo(a.rankingScore));
         break;
       case RankingCategory.wins:
-        // TASK 2: Sort strictly by victories
-        _rankedUsers = List.from(_allUsers)
-          ..sort((a, b) => b.totalWins.compareTo(a.totalWins));
+        _users.sort((a, b) => b.totalWins.compareTo(a.totalWins));
         break;
       case RankingCategory.xp:
-        // TASK 2: Sort strictly by totalXP
-        _rankedUsers = List.from(_allUsers)
-          ..sort((a, b) => b.currentXP.compareTo(a.currentXP));
+        _users.sort((a, b) => b.currentXP.compareTo(a.currentXP));
         break;
       case RankingCategory.matches:
-        _rankedUsers = List.from(_allUsers)
-          ..sort((a, b) => b.totalMatches.compareTo(a.totalMatches));
+        _users.sort((a, b) => b.totalMatches.compareTo(a.totalMatches));
         break;
     }
   }
 
   /// Get top N users
   List<User> getTopUsers(int count) {
-    return _rankedUsers.take(count).toList();
-  }
-
-  /// Get user position in current ranking
-  int getUserPosition(String userId) {
-    return _rankedUsers.indexWhere((u) => u.id == userId) + 1;
-  }
-
-  /// Get category display name in Portuguese
-  String getCategoryName(RankingCategory category) {
-    switch (category) {
-      case RankingCategory.overall:
-        return 'Geral';
-      case RankingCategory.wins:
-        return 'Vitórias';
-      case RankingCategory.xp:
-        return 'XP';
-      case RankingCategory.matches:
-        return 'Partidas';
-    }
+    return _users.take(count).toList();
   }
 
   /// Get category value for a user
-  int getCategoryValue(User user, RankingCategory category) {
+  dynamic getCategoryValue(User user, RankingCategory category) {
     switch (category) {
       case RankingCategory.overall:
         return user.rankingScore;
@@ -111,5 +83,11 @@ class RankingProvider with ChangeNotifier {
       case RankingCategory.matches:
         return user.totalMatches;
     }
+  }
+
+  @override
+  void dispose() {
+    _rankingSubscription?.cancel();
+    super.dispose();
   }
 }

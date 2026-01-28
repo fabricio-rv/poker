@@ -26,12 +26,6 @@ class _GameScreenState extends State<GameScreen> {
   String? _playerCard1;
   String? _playerCard2;
 
-  // Cartas da mesa (apenas para Host/Manager)
-  final List<String?> _boardCards = [null, null, null, null, null];
-
-  // Estado de revelação das cartas da mesa (Flop=3, Turn=4, River=5)
-  int _revealedBoardCards = 0;
-
   // Manager mode showdown state (apenas Host)
   final List<String?> _managerBoardCards = [null, null, null, null, null];
   final Map<int, List<String?>> _managerPlayerHands =
@@ -422,13 +416,17 @@ class _GameScreenState extends State<GameScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: List.generate(5, (index) {
-                    final isRevealed = index < _revealedBoardCards;
+                    // REACTIVE: Read from Firestore-synced boardCards
+                    final boardCards = game.boardCards;
+                    final hasCard = index < boardCards.length;
                     return Padding(
                       padding: EdgeInsets.only(right: index < 4 ? 8 : 0),
                       child: _buildCard(
                         isBoard: true,
-                        cardValue: isRevealed ? _boardCards[index] : null,
-                        onTap: isRevealed ? () => _pickBoardCard(index) : null,
+                        cardValue: hasCard ? boardCards[index] : null,
+                        onTap: hasCard
+                            ? () => _pickBoardCard(index, gameProvider)
+                            : null,
                       ),
                     );
                   }),
@@ -438,18 +436,18 @@ class _GameScreenState extends State<GameScreen> {
           ),
 
           // REVEAL BUTTONS - ONLY HOST
-          if (_revealedBoardCards < 5)
+          if (game.boardCards.length < 5)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: ElevatedButton.icon(
-                onPressed: _revealNextPhase,
+                onPressed: () => _revealNextPhase(gameProvider),
                 icon: const Icon(Icons.arrow_forward, size: 20),
                 label: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
-                    _revealedBoardCards == 0
+                    game.boardCards.isEmpty
                         ? 'Revelar Flop'
-                        : _revealedBoardCards == 3
+                        : game.boardCards.length == 3
                         ? 'Revelar Turn'
                         : 'Revelar River',
                     style: const TextStyle(fontSize: 15),
@@ -566,12 +564,14 @@ class _GameScreenState extends State<GameScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: List.generate(5, (index) {
-                    final isRevealed = index < _revealedBoardCards;
+                    // REACTIVE: Read from Firestore-synced boardCards
+                    final boardCards = game.boardCards;
+                    final hasCard = index < boardCards.length;
                     return Padding(
                       padding: EdgeInsets.only(right: index < 4 ? 8 : 0),
                       child: _buildCard(
                         isBoard: true,
-                        cardValue: isRevealed ? _boardCards[index] : null,
+                        cardValue: hasCard ? boardCards[index] : null,
                         onTap: null, // READ-ONLY - no tap
                       ),
                     );
@@ -833,7 +833,10 @@ class _GameScreenState extends State<GameScreen> {
     final card = await CardPickerSheet.show(context);
     if (card == null) return;
 
-    if (_isCardUsed(card)) {
+    final gameProvider = Provider.of<GameProvider>(context, listen: false);
+    final boardCards = gameProvider.currentGame?.boardCards ?? [];
+
+    if (_isCardUsed(card, boardCards)) {
       _showDuplicateCardSnack();
       return;
     }
@@ -845,26 +848,36 @@ class _GameScreenState extends State<GameScreen> {
         _playerCard2 = card;
       }
     });
-    _recalculateOdds();
+    _recalculateOdds(boardCards);
   }
 
-  Future<void> _pickBoardCard(int index) async {
+  Future<void> _pickBoardCard(int index, GameProvider gameProvider) async {
     final card = await CardPickerSheet.show(context);
     if (card == null) return;
 
-    if (_isCardUsed(card)) {
+    final game = gameProvider.currentGame;
+    if (game == null) return;
+
+    if (_isCardUsed(card, game.boardCards)) {
       _showDuplicateCardSnack();
       return;
     }
 
-    setState(() {
-      _boardCards[index] = card;
-    });
-    _recalculateOdds();
+    // CRITICAL: Update Firestore, not local state - this syncs to all devices
+    final updatedCards = List<String>.from(game.boardCards);
+    if (index < updatedCards.length) {
+      updatedCards[index] = card;
+    }
+    await gameProvider.updateBoardCards(updatedCards);
+    _recalculateOdds(game.boardCards);
   }
 
-  bool _isCardUsed(String card) {
-    final selected = <String?>[_playerCard1, _playerCard2, ..._boardCards];
+  bool _isCardUsed(String card, List<String> boardCards) {
+    final selected = <String?>[
+      _playerCard1,
+      _playerCard2,
+      ...boardCards.map((c) => c as String?),
+    ];
     return selected.whereType<String>().contains(card);
   }
 
@@ -877,13 +890,11 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  void _recalculateOdds() {
+  void _recalculateOdds(List<String> boardCards) {
     final gameProvider = Provider.of<GameProvider>(context, listen: false);
     final playerCards = <String>[];
     if (_playerCard1 != null) playerCards.add(_playerCard1!);
     if (_playerCard2 != null) playerCards.add(_playerCard2!);
-
-    final boardCards = _boardCards.whereType<String>().toList();
 
     if (playerCards.length == 2 && boardCards.isNotEmpty) {
       gameProvider.calculateWinProbability(
@@ -893,17 +904,30 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
-  void _revealNextPhase() {
-    setState(() {
-      if (_revealedBoardCards == 0) {
-        _revealedBoardCards = 3; // Flop
-      } else if (_revealedBoardCards == 3) {
-        _revealedBoardCards = 4; // Turn
-      } else if (_revealedBoardCards == 4) {
-        _revealedBoardCards = 5; // River
-      }
-    });
-    _recalculateOdds();
+  Future<void> _revealNextPhase(GameProvider gameProvider) async {
+    final game = gameProvider.currentGame;
+    if (game == null) return;
+
+    final currentCount = game.boardCards.length;
+    int newCount;
+
+    if (currentCount == 0) {
+      newCount = 3; // Flop
+    } else if (currentCount == 3) {
+      newCount = 4; // Turn
+    } else if (currentCount == 4) {
+      newCount = 5; // River
+    } else {
+      return; // Already at max
+    }
+
+    // CRITICAL: Sync to Firestore - adds placeholder cards that Host can edit
+    final updatedCards = List<String>.from(game.boardCards);
+    while (updatedCards.length < newCount) {
+      updatedCards.add('??'); // Placeholder until Host picks actual card
+    }
+    await gameProvider.updateBoardCards(updatedCards);
+    _recalculateOdds(updatedCards);
   }
 
   // ==================== MANAGER MODE DIALOGS ====================
@@ -1451,17 +1475,15 @@ class _GameScreenState extends State<GameScreen> {
     final game = gameProvider.currentGame;
     if (game == null) return;
 
-    await gameProvider.finishGame(winnerId);
-
     final userProvider = Provider.of<UserProvider>(context, listen: false);
 
-    for (final player in game.players) {
-      final isWinner = player.userId == winnerId;
+    // CRITICAL FIX: Use endGameWithFirebase for atomic batch XP distribution
+    // This ensures all players get XP even if one device goes offline
+    await gameProvider.endGameWithFirebase(winnerId: winnerId);
 
-      if (player.userId == userProvider.currentUser?.id) {
-        await userProvider.recordMatch(isWinner);
-      }
-    }
+    // CRITICAL: Refresh current user's data AFTER Firestore write completes
+    // This ensures UI shows updated XP/wins/matches with proper Firebase latency handling
+    await userProvider.refreshUser();
 
     if (mounted) {
       HapticFeedback.heavyImpact();

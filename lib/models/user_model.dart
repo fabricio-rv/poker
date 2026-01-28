@@ -1,68 +1,57 @@
 import 'package:uuid/uuid.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Core user model for the poker app
-/// Handles user authentication, XP progression, and player statistics
 class AppUser {
   final String id;
-  final String username;
+  final String username; // Mantendo o nome original que você prefere
+  final String email; // Adicionado para o Auth
   final String password;
   int level;
   int currentXP;
   int totalWins;
   int totalMatches;
   final DateTime createdAt;
+  String photoUrl;
 
   AppUser({
     String? id,
     required this.username,
+    required this.email,
     required this.password,
     this.level = 1,
     this.currentXP = 0,
     this.totalWins = 0,
     this.totalMatches = 0,
+    this.photoUrl = '',
     DateTime? createdAt,
   }) : id = id ?? const Uuid().v4(),
        createdAt = createdAt ?? DateTime.now();
 
-  /// Add XP to the user and handle level progression
-  /// Level up occurs when currentXP >= level * 1000
+  // --- TODA A SUA LÓGICA DE JOGO PRESERVADA ---
+
   void addXP(int amount) {
-    if (amount < 0) {
-      throw ArgumentError('XP amount cannot be negative');
-    }
-
+    if (amount < 0) throw ArgumentError('XP amount cannot be negative');
     currentXP += amount;
-
-    // Check for level ups
     while (currentXP >= level * 1000) {
       currentXP -= level * 1000;
       level++;
     }
   }
 
-  /// Record a match result (win or loss)
   void recordMatch(bool isWinner) {
     totalMatches++;
     if (isWinner) {
       totalWins++;
-      addXP(500); // Bonus XP for winning
+      addXP(500);
     } else {
-      addXP(100); // Base XP for participating
+      addXP(100);
     }
   }
 
-  /// Calculate win rate percentage
-  double get winRate {
-    if (totalMatches == 0) return 0.0;
-    return (totalWins / totalMatches) * 100;
-  }
+  double get winRate =>
+      totalMatches == 0 ? 0.0 : (totalWins / totalMatches) * 100;
+  int get xpNeededForNextLevel => level * 1000 - currentXP;
 
-  /// Calculate XP needed for next level
-  int get xpNeededForNextLevel {
-    return level * 1000 - currentXP;
-  }
-
-  /// Calculate total XP accumulated (including previous levels)
   int get totalXPAccumulated {
     int total = currentXP;
     for (int i = 1; i < level; i++) {
@@ -71,85 +60,69 @@ class AppUser {
     return total;
   }
 
-  /// Create a copy with modified fields
-  AppUser copyWith({
-    String? id,
-    String? username,
-    String? password,
-    int? level,
-    int? currentXP,
-    int? totalWins,
-    int? totalMatches,
-    DateTime? createdAt,
-  }) {
+  // --- CONVERSÃO PARA O FIREBASE (O QUE ESTAVA FALTANDO) ---
+
+  /// Para o UserProvider: Cria o objeto a partir do Firestore
+  factory AppUser.fromMap(Map<String, dynamic> map) {
     return AppUser(
-      id: id ?? this.id,
-      username: username ?? this.username,
-      password: password ?? this.password,
-      level: level ?? this.level,
-      currentXP: currentXP ?? this.currentXP,
-      totalWins: totalWins ?? this.totalWins,
-      totalMatches: totalMatches ?? this.totalMatches,
-      createdAt: createdAt ?? this.createdAt,
+      id: map['id'] ?? '',
+      username:
+          map['username'] ??
+          map['name'] ??
+          'Jogador', // Aceita ambos para evitar erro
+      email: map['email'] ?? '',
+      password: map['password'] ?? '',
+      level: map['level'] ?? 1,
+      currentXP: map['currentXP'] ?? 0,
+      totalWins: map['totalWins'] ?? 0,
+      totalMatches: map['totalMatches'] ?? 0,
+      photoUrl: map['photoUrl'] ?? '',
+      createdAt: map['createdAt'] is Timestamp
+          ? (map['createdAt'] as Timestamp).toDate()
+          : DateTime.now(),
     );
   }
 
-  /// Convert to JSON for storage/transmission
-  Map<String, dynamic> toJson() {
+  /// Para o AuthService: Salva os dados no Firestore
+  Map<String, dynamic> toMap() {
     return {
       'id': id,
       'username': username,
+      'email': email,
       'password': password,
       'level': level,
       'currentXP': currentXP,
       'totalWins': totalWins,
       'totalMatches': totalMatches,
-      'createdAt': createdAt.toIso8601String(),
+      'photoUrl': photoUrl,
+      'createdAt': Timestamp.fromDate(createdAt), // Formato padrão do Firebase
     };
   }
 
-  /// Create from JSON data
-  factory AppUser.fromJson(Map<String, dynamic> json) {
+  // Mantendo o seu copyWith para facilitar updates locais
+  AppUser copyWith({
+    String? id,
+    String? username,
+    String? email,
+    String? password,
+    int? level,
+    int? currentXP,
+    int? totalWins,
+    int? totalMatches,
+    String? photoUrl,
+    DateTime? createdAt,
+  }) {
     return AppUser(
-      id: json['id'] as String,
-      username: json['username'] as String,
-      password: json['password'] as String,
-      level: json['level'] as int? ?? 1,
-      currentXP: json['currentXP'] as int? ?? 0,
-      totalWins: json['totalWins'] as int? ?? 0,
-      totalMatches: json['totalMatches'] as int? ?? 0,
-      createdAt: json['createdAt'] != null
-          ? DateTime.parse(json['createdAt'] as String)
-          : DateTime.now(),
+      id: id ?? this.id,
+      username: username ?? this.username,
+      email: email ?? this.email,
+      password: password ?? this.password,
+      level: level ?? this.level,
+      currentXP: currentXP ?? this.currentXP,
+      totalWins: totalWins ?? this.totalWins,
+      totalMatches: totalMatches ?? this.totalMatches,
+      photoUrl: photoUrl ?? this.photoUrl,
+      createdAt: createdAt ?? this.createdAt,
     );
-  }
-
-  @override
-  String toString() {
-    return 'AppUser(id: $id, username: $username, level: $level, '
-        'XP: $currentXP/$xpNeededForNextLevel, wins: $totalWins/$totalMatches)';
-  }
-
-  @override
-  bool operator ==(Object other) {
-    if (identical(this, other)) return true;
-
-    return other is AppUser &&
-        other.id == id &&
-        other.username == username &&
-        other.level == level &&
-        other.currentXP == currentXP &&
-        other.totalWins == totalWins &&
-        other.totalMatches == totalMatches;
-  }
-
-  @override
-  int get hashCode {
-    return id.hashCode ^
-        username.hashCode ^
-        level.hashCode ^
-        currentXP.hashCode ^
-        totalWins.hashCode ^
-        totalMatches.hashCode;
   }
 }
