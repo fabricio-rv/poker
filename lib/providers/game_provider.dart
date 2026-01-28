@@ -8,7 +8,6 @@ import '../services/chip_calculator_service.dart';
 
 class GameProvider with ChangeNotifier {
   final GameService _gameService = GameService();
-  final ChipCalculatorService _chipCalculator = ChipCalculatorService();
 
   // Game setup state
   GameMode? _selectedMode;
@@ -77,8 +76,16 @@ class GameProvider with ChangeNotifier {
   void calculateChips() {
     if (_selectedPlayers.isEmpty) return;
 
-    _calculatedChips = _chipCalculator.calculateChipsPerPlayer(
+    final distribution = ChipCalculatorService.calculateDistribution(
       _selectedPlayers.length,
+    );
+
+    _calculatedChips = ChipConfig(
+      whiteChips: distribution['white'] ?? 0,
+      redChips: distribution['red'] ?? 0,
+      greenChips: distribution['green'] ?? 0,
+      blueChips: distribution['blue'] ?? 0,
+      blackChips: distribution['black'] ?? 0,
     );
     notifyListeners();
   }
