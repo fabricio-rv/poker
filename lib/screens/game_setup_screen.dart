@@ -625,7 +625,7 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
       case 0:
         return gameProvider.selectedMode != null;
       case 1:
-        return gameProvider.selectedPlayers.length >= 2;
+        return gameProvider.selectedPlayers.length >= 1;
       case 2:
         return true; // Always can start if we reach step 3
       default:

@@ -43,6 +43,11 @@ class _GameScreenState extends State<GameScreen> {
       if (gameProvider.isGameFinished) {
         _showGameOverDialog(gameProvider);
       }
+
+      // REAL-TIME SYNC: Ensure session stream is active for all participants
+      // GameProvider.joinSession() starts the Firestore listener automatically
+      // This ensures all game state updates (board cards, dealer position, eliminations)
+      // are synced in real-time to all devices in the session
     });
   }
 

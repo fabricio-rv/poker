@@ -1,15 +1,90 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
+import '../providers/game_provider.dart';
 import '../utils/constants.dart';
 import '../widgets/xp_progress_widget.dart';
+import '../services/firestore_service.dart';
+import '../models/game_session.dart';
 import 'ranking_screen.dart';
 import 'profile_screen.dart';
 import 'game_setup_screen.dart';
+import 'game_screen.dart';
 import 'debug_poker_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final FirestoreService _firestoreService = FirestoreService();
+  StreamSubscription<List<GameSession>>? _sessionsSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupAutoJoinListener();
+  }
+
+  /// Set up real-time listener for available sessions
+  /// Auto-joins user to a game when they become a participant
+  void _setupAutoJoinListener() {
+    _sessionsSubscription = _firestoreService.getAvailableSessions().listen((
+      sessions,
+    ) {
+      if (!mounted) return;
+
+      final gameProvider = Provider.of<GameProvider>(context, listen: false);
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final currentUserId = userProvider.currentUser?.id;
+
+      if (currentUserId == null) return;
+
+      // Check if current user is a participant in any waiting session
+      for (final session in sessions) {
+        final isParticipant = session.players.any(
+          (player) => player.userId == currentUserId,
+        );
+
+        if (isParticipant && gameProvider.currentGame == null) {
+          // Auto-navigate to game screen
+          _autoJoinGame(session.id);
+          break;
+        }
+      }
+    });
+  }
+
+  /// Auto-join game when invited
+  Future<void> _autoJoinGame(String sessionId) async {
+    if (!mounted) return;
+
+    final gameProvider = Provider.of<GameProvider>(context, listen: false);
+
+    try {
+      // Join the session in the provider
+      await gameProvider.joinSession(sessionId);
+
+      if (mounted) {
+        // Navigate to game screen
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const GameScreen()));
+      }
+    } catch (e) {
+      print('Error auto-joining game: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _sessionsSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

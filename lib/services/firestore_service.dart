@@ -174,6 +174,20 @@ class FirestoreService {
     });
   }
 
+  /// Stream of available sessions that match criteria (waiting status, not full, etc.)
+  /// Used for auto-join functionality to find joinable games
+  Stream<List<GameSession>> getAvailableSessions() {
+    return _firestore
+        .collection('sessions')
+        .where('status', isEqualTo: 'waiting')
+        .snapshots()
+        .map((snapshot) {
+          return snapshot.docs.map((doc) {
+            return GameSession.fromJson({...doc.data(), 'id': doc.id});
+          }).toList();
+        });
+  }
+
   /// Update game status (waiting → playing → finished)
   Future<void> updateGameStatus(String sessionId, String status) async {
     try {
