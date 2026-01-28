@@ -14,6 +14,8 @@ class GameSession {
   final String? winnerId;
   final GameMode gameMode;
   final bool isCompleted;
+  final bool
+  isProgressiveBlind; // true = Tournament (blinds increase), false = Cash Game (fixed blinds)
 
   GameSession({
     required this.id,
@@ -24,6 +26,7 @@ class GameSession {
     this.winnerId,
     required this.gameMode,
     this.isCompleted = false,
+    this.isProgressiveBlind = true, // Default to tournament mode
   }) : date = date ?? DateTime.now();
 
   /// Get active players (not eliminated)
@@ -45,6 +48,7 @@ class GameSession {
     String? winnerId,
     GameMode? gameMode,
     bool? isCompleted,
+    bool? isProgressiveBlind,
   }) {
     return GameSession(
       id: id ?? this.id,
@@ -55,6 +59,7 @@ class GameSession {
       winnerId: winnerId ?? this.winnerId,
       gameMode: gameMode ?? this.gameMode,
       isCompleted: isCompleted ?? this.isCompleted,
+      isProgressiveBlind: isProgressiveBlind ?? this.isProgressiveBlind,
     );
   }
 
@@ -68,6 +73,7 @@ class GameSession {
       'winnerId': winnerId,
       'gameMode': gameMode.toString().split('.').last,
       'isCompleted': isCompleted,
+      'isProgressiveBlind': isProgressiveBlind,
     };
   }
 
@@ -85,6 +91,7 @@ class GameSession {
           ? GameMode.multiplayer
           : GameMode.manager,
       isCompleted: json['isCompleted'] as bool? ?? false,
+      isProgressiveBlind: json['isProgressiveBlind'] as bool? ?? true,
     );
   }
 

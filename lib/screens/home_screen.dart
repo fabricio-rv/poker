@@ -6,6 +6,7 @@ import '../widgets/xp_progress_widget.dart';
 import 'ranking_screen.dart';
 import 'profile_screen.dart';
 import 'game_setup_screen.dart';
+import 'debug_poker_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -16,6 +17,19 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Home'),
         automaticallyImplyLeading: false,
+        actions: [
+          IconButton(
+            tooltip: 'Laboratório de Testes',
+            icon: const Icon(Icons.bug_report, size: 20),
+            color: Colors.white70,
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DebugPokerScreen()),
+              );
+            },
+          ),
+        ],
       ),
       body: Consumer<UserProvider>(
         builder: (context, userProvider, child) {

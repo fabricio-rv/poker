@@ -7,6 +7,7 @@ import '../providers/user_provider.dart';
 import '../models/game_session.dart';
 import '../utils/constants.dart';
 import '../widgets/card_picker_sheet.dart';
+import '../services/poker_logic_service.dart';
 import 'home_screen.dart';
 
 /// Tela principal do jogo em andamento
@@ -28,6 +29,13 @@ class _GameScreenState extends State<GameScreen> {
 
   // Estado de revelação das cartas da mesa (Flop, Turn, River)
   int _revealedBoardCards = 0;
+
+  // Manager mode showdown state
+  final List<String?> _managerBoardCards = [null, null, null, null, null];
+  final Map<int, List<String?>> _managerPlayerHands =
+      {}; // playerId -> [card1, card2]
+
+  final PokerLogicService _pokerLogicService = PokerLogicService();
 
   @override
   void initState() {
@@ -131,6 +139,65 @@ class _GameScreenState extends State<GameScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+          ),
+        ),
+
+        // MESA & TIRA-TEIMA Section
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Card(
+            color: AppColors.cardBackground,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.layers, color: AppColors.gold, size: 24),
+                      const SizedBox(width: 8),
+                      Text(
+                        'MESA & TIRA-TEIMA',
+                        style: AppTextStyles.heading3.copyWith(
+                          color: AppColors.gold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Board cards
+                  Text('Cartas da Mesa', style: AppTextStyles.bodyLarge),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(5, (index) {
+                      return Padding(
+                        padding: EdgeInsets.only(right: index < 4 ? 8 : 0),
+                        child: _buildCard(
+                          isBoard: true,
+                          cardValue: _managerBoardCards[index],
+                          onTap: () => _pickManagerBoardCard(index),
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Resolver showdown button (Always enabled)
+                  ElevatedButton.icon(
+                    onPressed: _showManagerShowdownDialog,
+                    icon: const Icon(Icons.auto_fix_high),
+                    label: const Text('Resolver Vencedor (Final)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.gold,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -268,14 +335,6 @@ class _GameScreenState extends State<GameScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              // Botão de teste para forçar aumento de blinds (desenvolvimento)
-              TextButton.icon(
-                onPressed: () => gameProvider.increaseBlindsManually(),
-                icon: const Icon(Icons.fast_forward, size: 16),
-                label: const Text('Forçar Próximo Nível (Teste)'),
-                style: TextButton.styleFrom(foregroundColor: Colors.grey),
-              ),
             ],
           ),
         ),
@@ -320,47 +379,6 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
 
-          // Win probability
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Card(
-              color: AppColors.primary,
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Probabilidade de Vitória',
-                          style: AppTextStyles.bodyLarge,
-                        ),
-                        Text(
-                          '${gameProvider.winProbability.toStringAsFixed(1)}%',
-                          style: AppTextStyles.heading2.copyWith(
-                            color: AppColors.gold,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: LinearProgressIndicator(
-                        value: gameProvider.winProbability / 100,
-                        minHeight: 20,
-                        backgroundColor: AppColors.darkGrey,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          _getProbabilityColor(gameProvider.winProbability),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
           const SizedBox(height: 24),
 
           // Board cards
@@ -399,43 +417,71 @@ class _GameScreenState extends State<GameScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: ElevatedButton.icon(
                 onPressed: _revealNextPhase,
-                icon: const Icon(Icons.arrow_forward),
-                label: Text(
-                  _revealedBoardCards == 0
-                      ? 'Revelar Flop'
-                      : _revealedBoardCards == 3
-                      ? 'Revelar Turn'
-                      : 'Revelar River',
+                icon: const Icon(Icons.arrow_forward, size: 20),
+                label: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    _revealedBoardCards == 0
+                        ? 'Revelar Flop'
+                        : _revealedBoardCards == 3
+                        ? 'Revelar Turn'
+                        : 'Revelar River',
+                    style: const TextStyle(fontSize: 15),
+                  ),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 14,
+                    horizontal: 20,
+                  ),
                 ),
               ),
             ),
           const SizedBox(height: 16),
 
-          // Mock update button
+          // Nota sobre Showdown
           Padding(
-            padding: const EdgeInsets.all(24),
-            child: ElevatedButton.icon(
-              onPressed: () {
-                gameProvider.mockCalculateOdds();
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Atualizar Probabilidades'),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Card(
+              color: AppColors.primary.withValues(alpha: 0.7),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    const Icon(
+                      Icons.info_outline,
+                      color: AppColors.gold,
+                      size: 32,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Modo Multiplayer',
+                      style: AppTextStyles.heading3.copyWith(
+                        color: AppColors.gold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Cada jogador vê apenas suas próprias cartas e a mesa compartilhada. O julgamento é feito no final na tela do juiz.',
+                      style: AppTextStyles.bodyMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
+          const SizedBox(height: 24),
         ],
       ),
     );
   }
 
   Widget _buildGameHeader(GameProvider gameProvider) {
-    final nextBlind = gameProvider.nextBlindLevel;
-
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [AppColors.darkGrey, AppColors.cardBackground],
@@ -443,90 +489,30 @@ class _GameScreenState extends State<GameScreen> {
           end: Alignment.bottomCenter,
         ),
       ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              // Timer (Countdown)
-              Column(
-                children: [
-                  const Icon(Icons.timer, color: AppColors.gold, size: 32),
-                  const SizedBox(height: 8),
-                  Text(
-                    gameProvider.formattedTime,
-                    style: AppTextStyles.heading2.copyWith(
-                      color: gameProvider.remainingSeconds <= 60
-                          ? AppColors
-                                .error // Vermelho quando falta menos de 1 min
-                          : AppColors.gold,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    'Tempo Restante',
-                    style: AppTextStyles.caption.copyWith(fontSize: 12),
-                  ),
-                ],
-              ),
-
-              // Blinds Atuais
-              Column(
-                children: [
-                  const Icon(
-                    Icons.attach_money,
-                    color: AppColors.gold,
-                    size: 32,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${gameProvider.currentSmallBlind}/${gameProvider.currentBigBlind}',
-                    style: AppTextStyles.heading2.copyWith(
-                      color: AppColors.gold,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    'Nível ${gameProvider.currentBlindLevel}',
-                    style: AppTextStyles.caption.copyWith(fontSize: 12),
-                  ),
-                ],
-              ),
-            ],
-          ),
-
-          // Próximo Nível de Blinds
-          if (nextBlind != null) ...[
-            const SizedBox(height: 12),
-            const Divider(color: Colors.white24, thickness: 1),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.arrow_upward, color: Colors.white70, size: 16),
-                const SizedBox(width: 8),
-                Text(
-                  'Próximo: ${nextBlind['small']}/${nextBlind['big']}',
-                  style: AppTextStyles.bodyMedium.copyWith(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ] else ...[
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.attach_money, color: AppColors.gold, size: 40),
             const SizedBox(height: 12),
             Text(
-              '⚠️ Nível Máximo Atingido',
-              style: AppTextStyles.caption.copyWith(
-                color: AppColors.warning,
+              '\$ ${gameProvider.currentSmallBlind}/${gameProvider.currentBigBlind}',
+              style: AppTextStyles.heading2.copyWith(
+                color: AppColors.gold,
+                fontSize: 32,
                 fontWeight: FontWeight.bold,
               ),
             ),
+            const SizedBox(height: 4),
+            Text(
+              'Blinds',
+              style: AppTextStyles.caption.copyWith(
+                fontSize: 14,
+                color: Colors.white70,
+              ),
+            ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -618,33 +604,115 @@ class _GameScreenState extends State<GameScreen> {
     return (suit == 'h' || suit == 'd') ? Colors.red : Colors.black;
   }
 
+  /// TASK 2: Visual card display for dialogs (white container with rank + suit icon)
+  Widget _buildCardForDialog(String? cardValue) {
+    final displayCard = cardValue != null;
+    final suitSymbol = displayCard ? _getCardSuitSymbol(cardValue) : '?';
+    final rank = displayCard ? _getCardRank(cardValue) : '?';
+    final suitColor = displayCard ? _getCardSuitColor(cardValue) : Colors.grey;
+
+    return Container(
+      width: 80,
+      height: 120,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: displayCard ? AppColors.gold : Colors.grey,
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: displayCard
+          ? Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  rank,
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: suitColor,
+                  ),
+                ),
+                Text(
+                  suitSymbol,
+                  style: TextStyle(fontSize: 32, color: suitColor),
+                ),
+              ],
+            )
+          : Center(child: Icon(Icons.add, size: 40, color: Colors.grey)),
+    );
+  }
+
   Future<void> _pickPlayerCard(int cardIndex) async {
     final card = await CardPickerSheet.show(context);
-    if (card != null) {
-      setState(() {
-        if (cardIndex == 1) {
-          _playerCard1 = card;
-        } else {
-          _playerCard2 = card;
-        }
-      });
-      // Mock: Atualizar probabilidade quando cartas forem selecionadas
-      if (_playerCard1 != null && _playerCard2 != null) {
-        final gameProvider = Provider.of<GameProvider>(context, listen: false);
-        gameProvider.mockCalculateOdds();
-      }
+    if (card == null) return;
+
+    if (_isCardUsed(card)) {
+      _showDuplicateCardSnack();
+      return;
     }
+
+    setState(() {
+      if (cardIndex == 1) {
+        _playerCard1 = card;
+      } else {
+        _playerCard2 = card;
+      }
+    });
+    _recalculateOdds();
   }
 
   Future<void> _pickBoardCard(int index) async {
     final card = await CardPickerSheet.show(context);
-    if (card != null) {
-      setState(() {
-        _boardCards[index] = card;
-      });
-      // Mock: Atualizar probabilidade quando cartas da mesa forem alteradas
-      final gameProvider = Provider.of<GameProvider>(context, listen: false);
-      gameProvider.mockCalculateOdds();
+    if (card == null) return;
+
+    if (_isCardUsed(card)) {
+      _showDuplicateCardSnack();
+      return;
+    }
+
+    setState(() {
+      _boardCards[index] = card;
+    });
+    _recalculateOdds();
+  }
+
+  bool _isCardUsed(String card) {
+    final selected = <String?>[_playerCard1, _playerCard2, ..._boardCards];
+    return selected.whereType<String>().contains(card);
+  }
+
+  void _showDuplicateCardSnack() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Essa carta já foi selecionada.'),
+        backgroundColor: AppColors.error,
+      ),
+    );
+  }
+
+  void _recalculateOdds() {
+    final gameProvider = Provider.of<GameProvider>(context, listen: false);
+    // Auto-calculation happens in provider when cards are set
+    final playerCards = <String>[];
+    if (_playerCard1 != null) playerCards.add(_playerCard1!);
+    if (_playerCard2 != null) playerCards.add(_playerCard2!);
+
+    final boardCards = _boardCards.whereType<String>().toList();
+
+    if (playerCards.length == 2 && boardCards.isNotEmpty) {
+      gameProvider.calculateWinProbability(
+        playerCards: playerCards,
+        boardCards: boardCards,
+      );
     }
   }
 
@@ -663,14 +731,7 @@ class _GameScreenState extends State<GameScreen> {
     });
 
     // Mock: Atualizar probabilidade após revelar cartas
-    final gameProvider = Provider.of<GameProvider>(context, listen: false);
-    gameProvider.mockCalculateOdds();
-  }
-
-  Color _getProbabilityColor(double probability) {
-    if (probability >= 70) return AppColors.success;
-    if (probability >= 40) return AppColors.warning;
-    return AppColors.error;
+    _recalculateOdds();
   }
 
   Future<void> _confirmElimination(
@@ -863,6 +924,297 @@ class _GameScreenState extends State<GameScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _pickManagerBoardCard(int index) async {
+    final card = await CardPickerSheet.show(context);
+    if (card == null) return;
+
+    if (_isManagerCardUsed(card, excludeIndex: index)) {
+      _showDuplicateCardSnack();
+      return;
+    }
+
+    setState(() {
+      _managerBoardCards[index] = card;
+    });
+  }
+
+  bool _isManagerCardUsed(String card, {int? excludeIndex}) {
+    final selected = <String?>[..._managerBoardCards];
+    for (final hand in _managerPlayerHands.values) {
+      selected.addAll(hand);
+    }
+    // Remove the excluded card at this index
+    if (excludeIndex != null && excludeIndex < selected.length) {
+      selected[excludeIndex] = null;
+    }
+    return selected.whereType<String>().contains(card);
+  }
+
+  Future<void> _showManagerShowdownDialog() async {
+    // Validation 1: Check if all 5 board cards are placed
+    if (_managerBoardCards.whereType<String>().length < 5) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Coloque as 5 cartas da mesa primeiro.'),
+            backgroundColor: AppColors.error,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    final game = Provider.of<GameProvider>(context, listen: false).currentGame;
+    if (game == null) return;
+
+    // Validation 2: Check if there are at least 2 active players
+    if (game.activePlayers.length < 2) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Selecione quem está na mão final.'),
+            backgroundColor: AppColors.error,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Step 1: Choose which players are in the showdown
+    final selectedPlayerIds = await _selectPlayersForShowdown(game);
+    if (selectedPlayerIds == null || selectedPlayerIds.isEmpty) return;
+
+    // Step 2: Input hands for each player
+    final playerHands = <String, List<String>>{}; // playerId -> [card1, card2]
+
+    for (final playerId in selectedPlayerIds) {
+      final player = game.players.firstWhere((p) => p.userId == playerId);
+      final hands = await _inputPlayerHand(player.username);
+
+      if (hands == null || hands.length != 2) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Entrada cancelada')));
+        }
+        return;
+      }
+
+      // Check for duplicate cards
+      final allCards = <String>[
+        ..._managerBoardCards.whereType<String>(),
+        ...playerHands.values.expand((h) => h),
+        ...hands,
+      ];
+      final uniqueCards = allCards.toSet();
+      if (allCards.length != uniqueCards.length) {
+        if (mounted) {
+          _showDuplicateCardSnack();
+        }
+        return;
+      }
+
+      playerHands[playerId] = hands;
+    }
+
+    // Step 3: Evaluate and show results
+    final hands = playerHands.entries.map((e) {
+      final player = game.players.firstWhere((p) => p.userId == e.key);
+      return PokerPlayerHand(name: player.username, cards: e.value);
+    }).toList();
+
+    final boardCards = _managerBoardCards.whereType<String>().toList();
+    final result = _pokerLogicService.evaluateShowdown(
+      players: hands,
+      boardCards: boardCards,
+    );
+
+    if (mounted) {
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: AppColors.cardBackground,
+          title: Column(
+            children: [
+              const Icon(Icons.emoji_events, color: AppColors.gold, size: 48),
+              const SizedBox(height: 8),
+              const Text('Resultado do Showdown'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'VENCEDOR: ${result.winner.player.name}',
+                  style: AppTextStyles.heading3.copyWith(color: AppColors.gold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Mão: ${result.winner.description}',
+                  style: AppTextStyles.bodyMedium,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Cartas: ${result.winner.player.cards.join(', ')}',
+                  style: AppTextStyles.caption,
+                ),
+                const Divider(color: Colors.white24, height: 20),
+                ...result.evaluations
+                    .where((e) => e.player.name != result.winner.player.name)
+                    .map(
+                      (e) => Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${e.player.name} - ${e.description}',
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              color: Colors.white70,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                        ],
+                      ),
+                    ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Fechar'),
+            ),
+          ],
+        ),
+      );
+
+      // Reset board for next hand
+      setState(() {
+        _managerBoardCards.fillRange(0, 5, null);
+        _managerPlayerHands.clear();
+      });
+    }
+  }
+
+  Future<List<String>?> _selectPlayersForShowdown(GameSession game) {
+    final activePlayers = game.activePlayers;
+    final selected = <String>[];
+
+    return showDialog<List<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: AppColors.cardBackground,
+          title: const Text('Selecionar Jogadores'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: activePlayers.map((player) {
+                return CheckboxListTile(
+                  title: Text(player.username),
+                  value: selected.contains(player.userId),
+                  onChanged: (value) {
+                    setState(() {
+                      if (value == true) {
+                        selected.add(player.userId);
+                      } else {
+                        selected.remove(player.userId);
+                      }
+                    });
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: selected.isNotEmpty
+                  ? () => Navigator.pop(context, selected)
+                  : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+              ),
+              child: const Text('Continuar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<List<String>?> _inputPlayerHand(String playerName) {
+    String? card1;
+    String? card2;
+
+    return showDialog<List<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: AppColors.cardBackground,
+          title: Text('Cartas de $playerName'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    GestureDetector(
+                      onTap: () async {
+                        final card = await CardPickerSheet.show(context);
+                        if (card != null && card != card2) {
+                          setState(() {
+                            card1 = card;
+                          });
+                        }
+                      },
+                      child: _buildCardForDialog(card1),
+                    ),
+                    const SizedBox(width: 16),
+                    GestureDetector(
+                      onTap: () async {
+                        final card = await CardPickerSheet.show(context);
+                        if (card != null && card != card1) {
+                          setState(() {
+                            card2 = card;
+                          });
+                        }
+                      },
+                      child: _buildCardForDialog(card2),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: card1 != null && card2 != null
+                  ? () => Navigator.pop(context, [card1!, card2!])
+                  : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+              ),
+              child: const Text('Confirmar'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<bool?> _showCancelConfirmation() {

@@ -111,10 +111,12 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            label,
-            style: AppTextStyles.caption.copyWith(
-              color: isActive ? AppColors.white : Colors.grey,
+          FittedBox(
+            child: Text(
+              label,
+              style: AppTextStyles.caption.copyWith(
+                color: isActive ? AppColors.white : Colors.grey,
+              ),
             ),
           ),
         ],
@@ -486,59 +488,62 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
   Widget _buildNavigationButtons(GameProvider gameProvider) {
     final canProceed = _canProceedToNextStep(gameProvider);
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.darkGrey,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          if (_currentStep > 0)
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () {
-                  setState(() {
-                    _currentStep--;
-                  });
-                },
-                child: const Text('Voltar'),
-              ),
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.darkGrey,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, -2),
             ),
-          if (_currentStep > 0) const SizedBox(width: 16),
-          Expanded(
-            flex: 2,
-            child: ElevatedButton(
-              onPressed: canProceed
-                  ? () async {
-                      if (_currentStep < 3) {
-                        setState(() {
-                          _currentStep++;
-                        });
-                      } else {
-                        // Start game
-                        await gameProvider.startGame();
-                        if (mounted) {
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const GameScreen(),
-                            ),
-                          );
+          ],
+        ),
+        child: Row(
+          children: [
+            if (_currentStep > 0)
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {
+                    setState(() {
+                      _currentStep--;
+                    });
+                  },
+                  child: const Text('Voltar'),
+                ),
+              ),
+            if (_currentStep > 0) const SizedBox(width: 16),
+            Expanded(
+              flex: 2,
+              child: ElevatedButton(
+                onPressed: canProceed
+                    ? () async {
+                        if (_currentStep < 3) {
+                          setState(() {
+                            _currentStep++;
+                          });
+                        } else {
+                          // Start game
+                          await gameProvider.startGame();
+                          if (mounted) {
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const GameScreen(),
+                              ),
+                            );
+                          }
                         }
                       }
-                    }
-                  : null,
-              child: Text(_currentStep == 3 ? 'Começar Jogo' : 'Próximo'),
+                    : null,
+                child: Text(_currentStep == 3 ? 'Começar Jogo' : 'Próximo'),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
