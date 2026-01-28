@@ -199,7 +199,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: Text(
                           'Esqueceu a senha?',
                           style: AppTextStyles.bodyMedium.copyWith(
-                            color: AppColors.primary,
+                            color: Colors.white70,
                             decoration: TextDecoration.underline,
                           ),
                         ),

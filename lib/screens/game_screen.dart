@@ -6,6 +6,7 @@ import '../providers/game_provider.dart';
 import '../providers/user_provider.dart';
 import '../models/game_session.dart';
 import '../utils/constants.dart';
+import '../widgets/card_picker_sheet.dart';
 import 'home_screen.dart';
 
 /// Tela principal do jogo em andamento
@@ -18,6 +19,16 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> {
+  // Cartas do jogador no modo multiplayer
+  String? _playerCard1;
+  String? _playerCard2;
+
+  // Cartas da mesa no modo juiz
+  final List<String?> _boardCards = [null, null, null, null, null];
+
+  // Estado de revelação das cartas da mesa (Flop, Turn, River)
+  int _revealedBoardCards = 0;
+
   @override
   void initState() {
     super.initState();
@@ -294,9 +305,15 @@ class _GameScreenState extends State<GameScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _buildCard(),
+                    _buildCard(
+                      cardValue: _playerCard1,
+                      onTap: () => _pickPlayerCard(1),
+                    ),
                     const SizedBox(width: 16),
-                    _buildCard(),
+                    _buildCard(
+                      cardValue: _playerCard2,
+                      onTap: () => _pickPlayerCard(2),
+                    ),
                   ],
                 ),
               ],
@@ -360,21 +377,43 @@ class _GameScreenState extends State<GameScreen> {
                 const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _buildCard(isBoard: true),
-                    const SizedBox(width: 8),
-                    _buildCard(isBoard: true),
-                    const SizedBox(width: 8),
-                    _buildCard(isBoard: true),
-                    const SizedBox(width: 8),
-                    _buildCard(isBoard: true),
-                    const SizedBox(width: 8),
-                    _buildCard(isBoard: true),
-                  ],
+                  children: List.generate(5, (index) {
+                    final isRevealed = index < _revealedBoardCards;
+                    return Padding(
+                      padding: EdgeInsets.only(right: index < 4 ? 8 : 0),
+                      child: _buildCard(
+                        isBoard: true,
+                        cardValue: isRevealed ? _boardCards[index] : null,
+                        onTap: isRevealed ? () => _pickBoardCard(index) : null,
+                      ),
+                    );
+                  }),
                 ),
               ],
             ),
           ),
+
+          // Botão para revelar próxima fase (Flop/Turn/River)
+          if (_revealedBoardCards < 5)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: ElevatedButton.icon(
+                onPressed: _revealNextPhase,
+                icon: const Icon(Icons.arrow_forward),
+                label: Text(
+                  _revealedBoardCards == 0
+                      ? 'Revelar Flop'
+                      : _revealedBoardCards == 3
+                      ? 'Revelar Turn'
+                      : 'Revelar River',
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+          const SizedBox(height: 16),
 
           // Mock update button
           Padding(
@@ -492,30 +531,140 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  Widget _buildCard({bool isBoard = false}) {
-    return Container(
-      width: isBoard ? 50 : 80,
-      height: isBoard ? 70 : 110,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.darkGrey, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.3),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+  Widget _buildCard({
+    bool isBoard = false,
+    String? cardValue,
+    VoidCallback? onTap,
+  }) {
+    final displayCard = cardValue != null;
+    final suitSymbol = displayCard ? _getCardSuitSymbol(cardValue) : '?';
+    final rank = displayCard ? _getCardRank(cardValue) : '?';
+    final suitColor = displayCard ? _getCardSuitColor(cardValue) : Colors.grey;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: isBoard ? 50 : 80,
+        height: isBoard ? 70 : 110,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: onTap != null ? AppColors.gold : AppColors.darkGrey,
+            width: onTap != null ? 3 : 2,
           ),
-        ],
-      ),
-      child: Center(
-        child: Icon(
-          Icons.question_mark,
-          size: isBoard ? 24 : 48,
-          color: Colors.grey,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
+        child: displayCard
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    rank,
+                    style: TextStyle(
+                      fontSize: isBoard ? 18 : 28,
+                      fontWeight: FontWeight.bold,
+                      color: suitColor,
+                    ),
+                  ),
+                  Text(
+                    suitSymbol,
+                    style: TextStyle(
+                      fontSize: isBoard ? 20 : 32,
+                      color: suitColor,
+                    ),
+                  ),
+                ],
+              )
+            : Center(
+                child: Icon(
+                  onTap != null ? Icons.add : Icons.question_mark,
+                  size: isBoard ? 24 : 48,
+                  color: onTap != null ? AppColors.gold : Colors.grey,
+                ),
+              ),
       ),
     );
+  }
+
+  String _getCardSuitSymbol(String card) {
+    final suit = card[card.length - 1];
+    switch (suit) {
+      case 'h':
+        return '♥';
+      case 'd':
+        return '♦';
+      case 'c':
+        return '♣';
+      case 's':
+        return '♠';
+      default:
+        return '?';
+    }
+  }
+
+  String _getCardRank(String card) {
+    return card.substring(0, card.length - 1).toUpperCase();
+  }
+
+  Color _getCardSuitColor(String card) {
+    final suit = card[card.length - 1];
+    return (suit == 'h' || suit == 'd') ? Colors.red : Colors.black;
+  }
+
+  Future<void> _pickPlayerCard(int cardIndex) async {
+    final card = await CardPickerSheet.show(context);
+    if (card != null) {
+      setState(() {
+        if (cardIndex == 1) {
+          _playerCard1 = card;
+        } else {
+          _playerCard2 = card;
+        }
+      });
+      // Mock: Atualizar probabilidade quando cartas forem selecionadas
+      if (_playerCard1 != null && _playerCard2 != null) {
+        final gameProvider = Provider.of<GameProvider>(context, listen: false);
+        gameProvider.mockCalculateOdds();
+      }
+    }
+  }
+
+  Future<void> _pickBoardCard(int index) async {
+    final card = await CardPickerSheet.show(context);
+    if (card != null) {
+      setState(() {
+        _boardCards[index] = card;
+      });
+      // Mock: Atualizar probabilidade quando cartas da mesa forem alteradas
+      final gameProvider = Provider.of<GameProvider>(context, listen: false);
+      gameProvider.mockCalculateOdds();
+    }
+  }
+
+  void _revealNextPhase() {
+    setState(() {
+      if (_revealedBoardCards == 0) {
+        // Revelar Flop (3 cartas)
+        _revealedBoardCards = 3;
+      } else if (_revealedBoardCards == 3) {
+        // Revelar Turn (4ª carta)
+        _revealedBoardCards = 4;
+      } else if (_revealedBoardCards == 4) {
+        // Revelar River (5ª carta)
+        _revealedBoardCards = 5;
+      }
+    });
+
+    // Mock: Atualizar probabilidade após revelar cartas
+    final gameProvider = Provider.of<GameProvider>(context, listen: false);
+    gameProvider.mockCalculateOdds();
   }
 
   Color _getProbabilityColor(double probability) {

@@ -117,13 +117,21 @@ class UserProvider with ChangeNotifier {
     }
   }
 
-  /// Update user profile
-  Future<bool> updateProfile(User updatedUser) async {
+  /// Update user profile (username and/or password)
+  Future<bool> updateProfile({String? username, String? newPassword}) async {
+    if (currentUser == null) return false;
+
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
+      // Criar usuário atualizado com novos dados
+      final updatedUser = currentUser!.copyWith(
+        username: username ?? currentUser!.username,
+        password: newPassword ?? currentUser!.password,
+      );
+
       await _authService.updateUser(updatedUser);
       _isLoading = false;
       notifyListeners();

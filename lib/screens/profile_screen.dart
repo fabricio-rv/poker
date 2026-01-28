@@ -4,6 +4,7 @@ import '../providers/user_provider.dart';
 import '../utils/constants.dart';
 import 'package:intl/intl.dart';
 import 'login_screen.dart';
+import 'edit_profile_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -135,9 +136,10 @@ class ProfileScreen extends StatelessWidget {
                 // Action buttons
                 OutlinedButton.icon(
                   onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Função de edição em desenvolvimento'),
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const EditProfileScreen(),
                       ),
                     );
                   },
