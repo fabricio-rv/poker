@@ -6,9 +6,10 @@ import '../providers/game_provider.dart';
 import '../providers/user_provider.dart';
 import '../models/game_session.dart';
 import '../utils/constants.dart';
+import '../utils/card_helper.dart';
 import '../widgets/card_picker_sheet.dart';
+import '../widgets/match_summary_overlay.dart';
 import '../services/poker_logic_service.dart';
-import '../services/rule_finder_service.dart';
 import 'home_screen.dart';
 
 /// Tela principal do jogo em andamento
@@ -26,13 +27,8 @@ class _GameScreenState extends State<GameScreen> {
   String? _playerCard1;
   String? _playerCard2;
 
-  // Manager mode showdown state (apenas Host)
-  final List<String?> _managerBoardCards = [null, null, null, null, null];
-  final Map<int, List<String?>> _managerPlayerHands =
-      {}; // playerId -> [card1, card2]
-
+  // Services
   final PokerLogicService _pokerLogicService = PokerLogicService();
-  final RuleFinderService _ruleFinderService = RuleFinderService();
 
   @override
   void initState() {
@@ -48,6 +44,17 @@ class _GameScreenState extends State<GameScreen> {
       // GameProvider.joinSession() starts the Firestore listener automatically
       // This ensures all game state updates (board cards, dealer position, eliminations)
       // are synced in real-time to all devices in the session
+
+      // NUCLEAR FIX: Listen for session cancellation
+      // If Host cancels, all participants are redirected to Home immediately
+      gameProvider.sessionCanceledStream.listen((_) {
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+            (route) => false,
+          );
+        }
+      });
     });
   }
 
@@ -99,6 +106,14 @@ class _GameScreenState extends State<GameScreen> {
         body: Consumer<GameProvider>(
           builder: (context, gameProvider, child) {
             final game = gameProvider.currentGame;
+            final matchResult = gameProvider.matchResult;
+
+            // CRITICAL: Show match summary overlay when game ends
+            if (matchResult != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _showMatchSummaryOverlay(context, gameProvider, matchResult);
+              });
+            }
 
             if (game == null) {
               return const Center(child: Text('Erro: Nenhum jogo ativo'));
@@ -179,12 +194,15 @@ class _GameScreenState extends State<GameScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: List.generate(5, (index) {
+                      final cardValue = index < game.boardCards.length
+                          ? game.boardCards[index]
+                          : '??';
                       return Padding(
                         padding: EdgeInsets.only(right: index < 4 ? 8 : 0),
                         child: _buildCard(
                           isBoard: true,
-                          cardValue: _managerBoardCards[index],
-                          onTap: () => _pickManagerBoardCard(index),
+                          cardValue: cardValue,
+                          onTap: () => _pickBoardCard(index, gameProvider),
                         ),
                       );
                     }),
@@ -194,28 +212,57 @@ class _GameScreenState extends State<GameScreen> {
                   // Resolver showdown button
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _showManagerShowdownDialog,
-                      icon: const Icon(Icons.emoji_events, size: 24),
-                      label: const Text(
-                        'RESOLVER VENCEDOR',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          letterSpacing: 0.5,
+                    child: Column(
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: () =>
+                              _showManagerShowdownDialog(gameProvider, game),
+                          icon: const Icon(Icons.emoji_events, size: 24),
+                          label: const Text(
+                            'RESOLVER VENCEDOR',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF5A2D35),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 18,
+                              horizontal: 20,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
                         ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF5A2D35),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 18,
-                          horizontal: 20,
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          onPressed: () => _cancelMatch(gameProvider),
+                          icon: const Icon(Icons.cancel_outlined, size: 24),
+                          label: const Text(
+                            'CANCELAR PARTIDA',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.error,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 18,
+                              horizontal: 20,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
                         ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
+                      ],
                     ),
                   ),
                 ],
@@ -364,13 +411,16 @@ class _GameScreenState extends State<GameScreen> {
     GameProvider gameProvider,
     GameSession game,
   ) {
+    // NUCLEAR FIX: Check if current user is actually the Host
+    final isHost = gameProvider.isCurrentUserHost;
+
     return SingleChildScrollView(
       child: Column(
         children: [
           // Clean header
           _buildCleanHeader(),
 
-          // MY CARDS SECTION
+          // MY CARDS SECTION - Always show for all participants
           Padding(
             padding: const EdgeInsets.all(24),
             child: Column(
@@ -387,12 +437,14 @@ class _GameScreenState extends State<GameScreen> {
                   children: [
                     _buildCard(
                       cardValue: _playerCard1,
-                      onTap: () => _pickPlayerCard(1),
+                      // Only Host can edit player cards
+                      onTap: isHost ? () => _pickPlayerCard(1) : null,
                     ),
                     const SizedBox(width: 16),
                     _buildCard(
                       cardValue: _playerCard2,
-                      onTap: () => _pickPlayerCard(2),
+                      // Only Host can edit player cards
+                      onTap: isHost ? () => _pickPlayerCard(2) : null,
                     ),
                   ],
                 ),
@@ -400,13 +452,9 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
 
-          // WIN PROBABILITY DISPLAY
-          if (_playerCard1 != null && _playerCard2 != null)
-            _buildProbabilityBar(gameProvider),
-
           const SizedBox(height: 24),
 
-          // BOARD CARDS SECTION - INTERACTIVE FOR HOST
+          // BOARD CARDS SECTION - Interactive ONLY for Host
           Padding(
             padding: const EdgeInsets.all(24),
             child: Column(
@@ -429,7 +477,8 @@ class _GameScreenState extends State<GameScreen> {
                       child: _buildCard(
                         isBoard: true,
                         cardValue: hasCard ? boardCards[index] : null,
-                        onTap: hasCard
+                        // HOST-ONLY: Only Host can edit board cards
+                        onTap: (isHost && hasCard)
                             ? () => _pickBoardCard(index, gameProvider)
                             : null,
                       ),
@@ -441,7 +490,7 @@ class _GameScreenState extends State<GameScreen> {
           ),
 
           // REVEAL BUTTONS - ONLY HOST
-          if (game.boardCards.length < 5)
+          if (isHost && game.boardCards.length < 5)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: ElevatedButton.icon(
@@ -470,36 +519,69 @@ class _GameScreenState extends State<GameScreen> {
 
           const SizedBox(height: 16),
 
-          // RESOLVE BUTTON - ONLY HOST
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _showManagerShowdownDialog,
-                icon: const Icon(Icons.emoji_events, size: 24),
-                label: const Text(
-                  'RESOLVER VENCEDOR',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF5A2D35),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 18,
-                    horizontal: 20,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+          // RESOLVE & CANCEL BUTTONS - ONLY HOST
+          if (isHost)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: SizedBox(
+                width: double.infinity,
+                child: Column(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: game.boardCards.length == 5
+                          ? () => _showManagerShowdownDialog(gameProvider, game)
+                          : null,
+                      icon: const Icon(Icons.emoji_events, size: 24),
+                      label: const Text(
+                        'RESOLVER VENCEDOR',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: game.boardCards.length == 5
+                            ? const Color(0xFF5A2D35)
+                            : Colors.grey,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 18,
+                          horizontal: 20,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: () => _cancelMatch(gameProvider),
+                      icon: const Icon(Icons.cancel_outlined, size: 24),
+                      label: const Text(
+                        'CANCELAR PARTIDA',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.error,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 18,
+                          horizontal: 20,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-          ),
 
           const SizedBox(height: 24),
         ],
@@ -547,10 +629,6 @@ class _GameScreenState extends State<GameScreen> {
               ],
             ),
           ),
-
-          // WIN PROBABILITY DISPLAY
-          if (_playerCard1 != null && _playerCard2 != null)
-            _buildProbabilityBar(gameProvider),
 
           const SizedBox(height: 24),
 
@@ -621,6 +699,29 @@ class _GameScreenState extends State<GameScreen> {
           ),
 
           const SizedBox(height: 24),
+
+          // SAFE EXIT BUTTON - GUEST ONLY
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => _showGuestExitConfirmation(context),
+                icon: const Icon(Icons.exit_to_app, size: 20),
+                label: const Text('SAIR SEM SALVAR'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 14,
+                    horizontal: 20,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 24),
         ],
       ),
     );
@@ -647,49 +748,86 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  Widget _buildProbabilityBar(GameProvider gameProvider) {
-    final probability = gameProvider.winProbability;
-    final percentage = probability.toStringAsFixed(1);
+  /// Build card widget for player hand input dialogs
+  Widget _buildCardForDialog(String? cardValue) {
+    final displayCard = cardValue != null && cardValue != '??';
+    late final String suitSymbol;
+    late final String rank;
+    late final Color suitColor;
 
-    // Color coding: Red <30%, Yellow 30-60%, Green >60%
-    Color getColor(double prob) {
-      if (prob < 30) return Colors.red;
-      if (prob < 60) return Colors.orange;
-      return Colors.green;
+    if (displayCard) {
+      suitSymbol = CardHelper.getSuitSymbol(cardValue);
+      rank = CardHelper.getRank(cardValue);
+      suitColor = Color(CardHelper.getSuitColor(cardValue));
+    } else {
+      suitSymbol = '?';
+      rank = '?';
+      suitColor = Colors.grey;
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Probabilidade de Vitória',
-                style: AppTextStyles.bodyLarge.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                '$percentage%',
-                style: AppTextStyles.bodyLarge.copyWith(
-                  color: getColor(probability),
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
+    return Container(
+      width: 80,
+      height: 120,
+      decoration: BoxDecoration(
+        color: displayCard ? Colors.white : const Color(0xFF1A1A2E),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: displayCard ? suitColor : Colors.grey[600]!,
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.5),
+            blurRadius: 4,
+            offset: const Offset(2, 2),
           ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: probability / 100,
-              minHeight: 24,
-              backgroundColor: AppColors.darkGrey,
-              valueColor: AlwaysStoppedAnimation<Color>(getColor(probability)),
+        ],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(4),
+            child: Column(
+              children: [
+                Text(
+                  rank,
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: displayCard ? suitColor : Colors.grey,
+                  ),
+                ),
+                Text(
+                  suitSymbol,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: displayCard ? suitColor : Colors.grey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(4),
+            child: Column(
+              children: [
+                Text(
+                  suitSymbol,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: displayCard ? suitColor : Colors.grey,
+                  ),
+                ),
+                Text(
+                  rank,
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: displayCard ? suitColor : Colors.grey,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -702,10 +840,20 @@ class _GameScreenState extends State<GameScreen> {
     String? cardValue,
     VoidCallback? onTap,
   }) {
-    final displayCard = cardValue != null;
-    final suitSymbol = displayCard ? _getCardSuitSymbol(cardValue) : '?';
-    final rank = displayCard ? _getCardRank(cardValue) : '?';
-    final suitColor = displayCard ? _getCardSuitColor(cardValue) : Colors.grey;
+    final displayCard = cardValue != null && cardValue != '??';
+    late final String suitSymbol;
+    late final String rank;
+    late final Color suitColor;
+
+    if (displayCard) {
+      suitSymbol = CardHelper.getSuitSymbol(cardValue);
+      rank = CardHelper.getRank(cardValue);
+      suitColor = Color(CardHelper.getSuitColor(cardValue));
+    } else {
+      suitSymbol = '?';
+      rank = '?';
+      suitColor = Colors.grey;
+    }
 
     return GestureDetector(
       onTap: onTap,
@@ -759,79 +907,6 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  String _getCardSuitSymbol(String card) {
-    final suit = card[card.length - 1];
-    switch (suit) {
-      case 'h':
-        return '♥';
-      case 'd':
-        return '♦';
-      case 'c':
-        return '♣';
-      case 's':
-        return '♠';
-      default:
-        return '?';
-    }
-  }
-
-  String _getCardRank(String card) {
-    final rank = card.substring(0, card.length - 1).toUpperCase();
-    // Always convert T to 10
-    return rank == 'T' ? '10' : rank;
-  }
-
-  Color _getCardSuitColor(String card) {
-    final suit = card[card.length - 1];
-    return (suit == 'h' || suit == 'd') ? Colors.red : Colors.black;
-  }
-
-  Widget _buildCardForDialog(String? cardValue) {
-    final displayCard = cardValue != null;
-    final suitSymbol = displayCard ? _getCardSuitSymbol(cardValue) : '?';
-    final rank = displayCard ? _getCardRank(cardValue) : '?';
-    final suitColor = displayCard ? _getCardSuitColor(cardValue) : Colors.grey;
-
-    return Container(
-      width: 80,
-      height: 120,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: displayCard ? AppColors.gold : Colors.grey,
-          width: 2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: displayCard
-          ? Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  rank,
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: suitColor,
-                  ),
-                ),
-                Text(
-                  suitSymbol,
-                  style: TextStyle(fontSize: 32, color: suitColor),
-                ),
-              ],
-            )
-          : Center(child: Icon(Icons.add, size: 40, color: Colors.grey)),
-    );
-  }
-
   // ==================== CARD PICKING ====================
 
   Future<void> _pickPlayerCard(int cardIndex) async {
@@ -853,7 +928,6 @@ class _GameScreenState extends State<GameScreen> {
         _playerCard2 = card;
       }
     });
-    _recalculateOdds(boardCards);
   }
 
   Future<void> _pickBoardCard(int index, GameProvider gameProvider) async {
@@ -874,7 +948,6 @@ class _GameScreenState extends State<GameScreen> {
       updatedCards[index] = card;
     }
     await gameProvider.updateBoardCards(updatedCards);
-    _recalculateOdds(game.boardCards);
   }
 
   bool _isCardUsed(String card, List<String> boardCards) {
@@ -895,23 +968,12 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  void _recalculateOdds(List<String> boardCards) {
-    final gameProvider = Provider.of<GameProvider>(context, listen: false);
-    final playerCards = <String>[];
-    if (_playerCard1 != null) playerCards.add(_playerCard1!);
-    if (_playerCard2 != null) playerCards.add(_playerCard2!);
-
-    if (playerCards.length == 2 && boardCards.isNotEmpty) {
-      gameProvider.calculateWinProbability(
-        playerCards: playerCards,
-        boardCards: boardCards,
-      );
-    }
-  }
-
   Future<void> _revealNextPhase(GameProvider gameProvider) async {
     final game = gameProvider.currentGame;
     if (game == null) return;
+
+    // Only host can reveal phases
+    if (!gameProvider.isHost) return;
 
     final currentCount = game.boardCards.length;
     int newCount;
@@ -932,38 +994,17 @@ class _GameScreenState extends State<GameScreen> {
       updatedCards.add('??'); // Placeholder until Host picks actual card
     }
     await gameProvider.updateBoardCards(updatedCards);
-    _recalculateOdds(updatedCards);
   }
 
-  // ==================== MANAGER MODE DIALOGS ====================
+  // ==================== SHOWDOWN DIALOGS ====================
 
-  Future<void> _pickManagerBoardCard(int index) async {
-    final card = await CardPickerSheet.show(context);
-    if (card == null) return;
-
-    if (_isManagerCardUsed(card, excludeIndex: index)) {
-      _showDuplicateCardSnack();
-      return;
-    }
-
-    setState(() {
-      _managerBoardCards[index] = card;
-    });
-  }
-
-  bool _isManagerCardUsed(String card, {int? excludeIndex}) {
-    final selected = <String?>[..._managerBoardCards];
-    for (final hand in _managerPlayerHands.values) {
-      selected.addAll(hand);
-    }
-    if (excludeIndex != null && excludeIndex < selected.length) {
-      selected[excludeIndex] = null;
-    }
-    return selected.whereType<String>().contains(card);
-  }
-
-  Future<void> _showManagerShowdownDialog() async {
-    if (_managerBoardCards.whereType<String>().length < 5) {
+  /// Simplified showdown - Host selects finalistas, auto-evaluates winner from cards in Firestore
+  Future<void> _showManagerShowdownDialog(
+    GameProvider gameProvider,
+    GameSession game,
+  ) async {
+    // Validate board cards are complete (from Firestore sync)
+    if (game.boardCards.length != 5) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -976,14 +1017,11 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    final game = Provider.of<GameProvider>(context, listen: false).currentGame;
-    if (game == null) return;
-
     if (game.activePlayers.length < 2) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Selecione quem está na mão final.'),
+            content: Text('Pelo menos 2 jogadores precisam estar na mesa.'),
             backgroundColor: AppColors.error,
             duration: Duration(seconds: 2),
           ),
@@ -992,11 +1030,14 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
+    // Step 1: Host selects which players are in the showdown (finalistas)
     final selectedPlayerIds = await _selectPlayersForShowdown(game);
     if (selectedPlayerIds == null || selectedPlayerIds.isEmpty) return;
 
     final playerHands = <String, List<String>>{};
 
+    // Step 2: Get player hands (from Firestore or ask for them)
+    // For now, we'll ask for hands - in future this could come from participants storage
     for (final playerId in selectedPlayerIds) {
       final player = game.players.firstWhere((p) => p.userId == playerId);
       final hands = await _inputPlayerHand(player.username);
@@ -1010,8 +1051,9 @@ class _GameScreenState extends State<GameScreen> {
         return;
       }
 
+      // Validate no duplicate cards
       final allCards = <String>[
-        ..._managerBoardCards.whereType<String>(),
+        ...game.boardCards,
         ...playerHands.values.expand((h) => h),
         ...hands,
       ];
@@ -1026,20 +1068,21 @@ class _GameScreenState extends State<GameScreen> {
       playerHands[playerId] = hands;
     }
 
+    // Step 3: Auto-evaluate winner using poker logic
     final hands = playerHands.entries.map((e) {
       final player = game.players.firstWhere((p) => p.userId == e.key);
       return PokerPlayerHand(name: player.username, cards: e.value);
     }).toList();
 
-    final boardCards = _managerBoardCards.whereType<String>().toList();
     final result = _pokerLogicService.evaluateShowdown(
       players: hands,
-      boardCards: boardCards,
+      boardCards: game.boardCards,
     );
 
-    final userProvider = Provider.of<UserProvider>(context, listen: false);
     final winnerName = result.winner.player.name;
+    final winningHandType = result.winner.translatedType;
 
+    // Find winner's user ID
     String? winnerUserId;
     for (final entry in playerHands.entries) {
       final player = game.players.firstWhere((p) => p.userId == entry.key);
@@ -1049,110 +1092,65 @@ class _GameScreenState extends State<GameScreen> {
       }
     }
 
-    for (final playerId in selectedPlayerIds) {
-      final isWinner = playerId == winnerUserId;
-      if (userProvider.currentUser?.id == playerId) {
-        await userProvider.completeMatch(isWinner: isWinner);
-      }
+    // Step 4: Record match result with XP distribution
+    if (winnerUserId != null) {
+      await gameProvider.endGameWithFirebase(
+        winnerId: winnerUserId,
+        winningHandType: winningHandType,
+      );
     }
 
-    if (mounted) {
-      await showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: AppColors.cardBackground,
-          title: Column(
-            children: [
-              const Icon(Icons.emoji_events, color: AppColors.gold, size: 48),
-              const SizedBox(height: 8),
-              const Text('Resultado do Showdown'),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'VENCEDOR: $winnerName',
-                  style: AppTextStyles.heading3.copyWith(color: AppColors.gold),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _pokerLogicService.getWinningExplanation(result: result),
-                  style: AppTextStyles.bodyMedium,
-                ),
-                const Divider(color: Colors.white24, height: 24),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.success.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.star,
-                            color: AppColors.gold,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Recompensas XP',
-                            style: AppTextStyles.bodyLarge.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Vencedor: $winnerName (+500 XP)',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: AppColors.gold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Demais Jogadores: (+100 XP)',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: Colors.white70,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton.icon(
-              onPressed: () {
-                _showRuleExplanationDialog(result.winner.translatedType);
-              },
-              icon: const Icon(Icons.menu_book, color: AppColors.gold),
-              label: Text(
-                '📖 Entender a Regra',
-                style: AppTextStyles.bodyMedium.copyWith(color: AppColors.gold),
-              ),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Fechar'),
-            ),
+    // Step 5: Show match summary overlay (automatically triggered by provider listener)
+    // The overlay is shown automatically when GameProvider emits matchResult change
+  }
+
+  /// Alternative simpler flow for future: Cancel Match without resolving winner
+  Future<void> _cancelMatch(GameProvider gameProvider) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.cardBackground,
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber, color: AppColors.warning),
+            SizedBox(width: 8),
+            Text('Cancelar Partida'),
           ],
         ),
-      );
+        content: const Text(
+          'Tem certeza que deseja cancelar esta partida?\n\n'
+          'Nenhum XP será distribuído e a partida será encerrada.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Continuar Jogando'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
+            child: const Text('Cancelar Partida'),
+          ),
+        ],
+      ),
+    );
 
-      setState(() {
-        _managerBoardCards.fillRange(0, 5, null);
-        _managerPlayerHands.clear();
-      });
+    if (confirm == true) {
+      // Set session status to finished without recording XP results
+      await gameProvider.cancelGameWithoutWinner();
+
+      if (mounted) {
+        HapticFeedback.mediumImpact();
+        // Return to home
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+          (route) => false,
+        );
+      }
     }
   }
+
+  // ==================== HELPER DIALOGS ====================
 
   Future<List<String>?> _selectPlayersForShowdown(GameSession game) {
     final activePlayers = game.activePlayers;
@@ -1266,73 +1264,6 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Future<void> _showRuleExplanationDialog(String handRank) async {
-    final explanation = _ruleFinderService.getExplanationForHand(handRank);
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.cardBackground,
-        title: Row(
-          children: [
-            const Icon(Icons.school, color: AppColors.gold, size: 28),
-            const SizedBox(width: 12),
-            const Expanded(child: Text('O que diz a Regra?')),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.primary, width: 1),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.emoji_events,
-                      color: AppColors.gold,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      handRank,
-                      style: AppTextStyles.bodyLarge.copyWith(
-                        color: AppColors.gold,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Divider(color: Colors.white24),
-              const SizedBox(height: 16),
-              Text(
-                explanation,
-                style: AppTextStyles.bodyMedium.copyWith(
-                  height: 1.5,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Entendi'),
-          ),
-        ],
       ),
     );
   }
@@ -1484,7 +1415,11 @@ class _GameScreenState extends State<GameScreen> {
 
     // CRITICAL FIX: Use endGameWithFirebase for atomic batch XP distribution
     // This ensures all players get XP even if one device goes offline
-    await gameProvider.endGameWithFirebase(winnerId: winnerId);
+    // For Manager Mode, winningHandType is not evaluated - use placeholder
+    await gameProvider.endGameWithFirebase(
+      winnerId: winnerId,
+      winningHandType: 'Manager Game',
+    );
 
     // CRITICAL: Refresh current user's data AFTER Firestore write completes
     // This ensures UI shows updated XP/wins/matches with proper Firebase latency handling
@@ -1519,6 +1454,39 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
+  Future<void> _showGuestExitConfirmation(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.cardBackground,
+        title: const Text('Sair do Jogo'),
+        content: const Text(
+          'Se você sair agora, seus dados de XP e partida não serão salvos.\n\nDeseja continuar?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              // Leave without saving stats
+              if (mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const HomeScreen()),
+                  (route) => false,
+                );
+              }
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Sair'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<bool?> _showCancelConfirmation() {
     return showDialog<bool>(
       context: context,
@@ -1541,5 +1509,58 @@ class _GameScreenState extends State<GameScreen> {
         ],
       ),
     );
+  }
+
+  /// Display match summary overlay with results
+  Future<void> _showMatchSummaryOverlay(
+    BuildContext context,
+    GameProvider gameProvider,
+    MatchResult matchResult,
+  ) async {
+    if (!mounted) return;
+
+    // Convert match result to participant results for overlay
+    final participantResults = matchResult.participantResults.entries.map((e) {
+      final xpResult = e.value;
+      return ParticipantResult(
+        username: xpResult.username,
+        previousXP: xpResult.previousXP,
+        currentXP: xpResult.currentXP,
+        isWinner: e.key == matchResult.winnerUserId,
+      );
+    }).toList();
+
+    // Sort: winner first, then others
+    participantResults.sort((a, b) {
+      if (a.isWinner) return -1;
+      if (b.isWinner) return 1;
+      return 0;
+    });
+
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => MatchSummaryOverlay(
+          winnerUsername: matchResult.winnerUsername,
+          winningHandType: matchResult.winningHandType,
+          participantResults: participantResults,
+          isHost: gameProvider.isHost,
+          onDismiss: () {
+            gameProvider.clearMatchResult();
+            Navigator.of(context).pop(true);
+          },
+        ),
+      ),
+    );
+
+    if (result == true && mounted) {
+      // Return to home
+      await gameProvider.leaveSession();
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+          (route) => false,
+        );
+      }
+    }
   }
 }

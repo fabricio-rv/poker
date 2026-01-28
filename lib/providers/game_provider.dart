@@ -2,14 +2,44 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/game_session.dart';
 import '../models/player_in_game.dart';
 import '../models/chip_config.dart';
 import '../models/user.dart';
 import '../services/game_service.dart';
 import '../services/chip_calculator_service.dart';
-import '../services/poker_logic_service.dart';
 import '../services/firestore_service.dart';
+
+/// Match Result - Stores the outcome of a completed game
+class MatchResult {
+  final String winnerUserId;
+  final String winnerUsername;
+  final String winningHandType; // e.g., "Full House", "Flush"
+  final Map<String, XPResult> participantResults; // userId -> XPResult
+
+  MatchResult({
+    required this.winnerUserId,
+    required this.winnerUsername,
+    required this.winningHandType,
+    required this.participantResults,
+  });
+}
+
+/// XP Result for a participant
+class XPResult {
+  final String username;
+  final int previousXP;
+  final int currentXP;
+
+  XPResult({
+    required this.username,
+    required this.previousXP,
+    required this.currentXP,
+  });
+
+  int get xpGained => currentXP - previousXP;
+}
 
 /// Provider principal para gerenciamento de estado do jogo de poker
 /// Implementa toda a lógica de temporização, blinds, eliminação e rebuys
@@ -25,6 +55,9 @@ class GameProvider with ChangeNotifier {
   // Firebase session stream
   String? _activeSessionId;
   StreamSubscription<GameSession?>? _sessionSubscription;
+
+  // Event stream for session cancellation (broadcast to all participants)
+  final _sessionCanceledController = StreamController<bool>.broadcast();
 
   // ========== Estado de Configuração do Jogo ==========
   GameMode? _selectedMode;
@@ -61,9 +94,11 @@ class GameProvider with ChangeNotifier {
   ];
 
   // Multiplayer específico
-  double _winProbability = 0.0;
   bool _isHost =
       true; // true = Host (Manager Mode), false = Guest (Player Mode)
+
+  // Match result (synced from Firestore when game ends)
+  MatchResult? _matchResult;
 
   // ========== Getters ==========
   GameMode? get selectedMode => _selectedMode;
@@ -80,12 +115,14 @@ class GameProvider with ChangeNotifier {
   int get currentSmallBlind => _currentSmallBlind;
   int get currentBigBlind => _currentBigBlind;
   int get dealerIndex => _dealerIndex;
-  double get winProbability => _winProbability;
   bool get isHost => _isHost;
+  MatchResult? get matchResult => _matchResult;
+  String? get activeSessionId => _activeSessionId;
 
   bool get isGameActive => _currentGame != null;
   bool get isGameFinished => _currentGame?.isFinished ?? false;
   firebase_auth.User? get firebaseUser => _firebaseUser;
+  Stream<bool> get sessionCanceledStream => _sessionCanceledController.stream;
 
   // Constructor - Initialize Firebase auth listener
   GameProvider() {
@@ -213,6 +250,7 @@ class GameProvider with ChangeNotifier {
       isRanked: true,
       buyInAmount: _buyInAmount,
       isProgressiveBlind: _isProgressiveBlind,
+      hostUserId: hostUser.id,
     );
 
     // Create session in Firebase
@@ -427,149 +465,6 @@ class GameProvider with ChangeNotifier {
 
   // ========== Multiplayer (Probabilidades) ==========
 
-  void updateWinProbability(double probability) {
-    _winProbability = probability;
-    notifyListeners();
-  }
-
-  /// Calcula a probabilidade de vitória usando simulação Monte Carlo
-  /// Simula 600 mãos aleatórias do oponente contra a mão atual do jogador
-  /// Usa a avaliação real de mãos de poker (não apenas high cards)
-  void calculateWinProbability({
-    required List<String> playerCards,
-    required List<String> boardCards,
-  }) {
-    if (playerCards.length != 2) {
-      _winProbability = 0.0;
-      notifyListeners();
-      return;
-    }
-
-    // Se não houver cartas da mesa, probabilidade neutra
-    if (boardCards.isEmpty) {
-      _winProbability = 50.0;
-      notifyListeners();
-      return;
-    }
-
-    try {
-      _updateProbability(playerCards, boardCards);
-    } catch (e) {
-      debugPrint('Erro ao calcular probabilidade: $e');
-      _winProbability = 50.0;
-      notifyListeners();
-    }
-  }
-
-  /// Método interno que executa a simulação Monte Carlo com avaliação real de mãos
-  /// Algoritmo:
-  /// 1. Cria um deck fresco excluindo as cartas do jogador e da mesa
-  /// 2. Para cada iteração:
-  ///    a. Sorteia 2 cartas para o oponente
-  ///    b. Completa a mesa para 5 cartas se necessário
-  ///    c. Avalia a mão do jogador e do oponente
-  ///    d. Compara: Win se jogador > oponente, Loss se < , Tie se ==
-  /// 3. Calcula: winRate = wins / 600
-  void _updateProbability(List<String> playerCards, List<String> boardCards) {
-    const int simulations = 600;
-    int wins = 0;
-
-    // Cartas usadas (não podem ser sorteadas para oponente)
-    final usedCards = <String>{...playerCards, ...boardCards};
-
-    // Deck completo (52 cartas) - mantém a ordem padronizada
-    final ranks = [
-      'A',
-      'K',
-      'Q',
-      'J',
-      'T',
-      '9',
-      '8',
-      '7',
-      '6',
-      '5',
-      '4',
-      '3',
-      '2',
-    ];
-    final suits = ['h', 'd', 'c', 's'];
-    final fullDeck = <String>[];
-    for (final rank in ranks) {
-      for (final suit in suits) {
-        fullDeck.add('$rank$suit');
-      }
-    }
-
-    // Cartas disponíveis para sortear (excluindo usadas)
-    final availableCards = fullDeck
-        .where((c) => !usedCards.contains(c))
-        .toList();
-
-    // Quantas cartas faltam na mesa para completar 5?
-    final missingBoardCards = 5 - boardCards.length;
-
-    // Instância do serviço de lógica de poker para avaliação real
-    final pokerLogic = PokerLogicService();
-
-    // Simulação Monte Carlo - 600 iterações
-    for (int i = 0; i < simulations; i++) {
-      // Embaralhar cartas disponíveis para esta iteração
-      final shuffled = List<String>.from(availableCards)..shuffle();
-
-      // Sortear 2 cartas para oponente
-      final opponentCards = shuffled.take(2).toList();
-
-      // Completar a mesa se necessário (se temos turn/river incompleto)
-      final completedBoard = List<String>.from(boardCards);
-      if (missingBoardCards > 0) {
-        completedBoard.addAll(shuffled.skip(2).take(missingBoardCards));
-      }
-
-      try {
-        // Avaliar mão do jogador com a mesa completa
-        final myEval = pokerLogic.evaluateHand(
-          playerName: 'Player',
-          playerCards: playerCards,
-          boardCards: completedBoard,
-        );
-
-        // Avaliar mão do oponente com a MESMA mesa
-        // CRITICAL: Oponente usa as mesmas 5 cartas da mesa (não cartas diferentes)
-        final opponentEval = pokerLogic.evaluateHand(
-          playerName: 'Opponent',
-          playerCards: opponentCards,
-          boardCards: completedBoard,
-        );
-
-        // Comparar mãos usando o comparador correto
-        // compareHands retorna: > 0 se A vence, < 0 se B vence, 0 se empate
-        final comparisonResult = pokerLogic.compareHands(myEval, opponentEval);
-
-        // CRITICAL: Contar APENAS vitórias (não empates como 0.5)
-        if (comparisonResult > 0) {
-          wins++;
-        }
-        // Se comparisonResult == 0 (empate), não contamos como win
-        // Se comparisonResult < 0 (derrota), também não contamos
-      } catch (e) {
-        debugPrint('Erro na iteração $i da simulação: $e');
-        // Continua a simulação em caso de erro
-        continue;
-      }
-    }
-
-    // Calcular porcentagem de vitórias (sem contar empates como wins)
-    _winProbability = (wins / simulations) * 100;
-    notifyListeners();
-  }
-
-  void mockCalculateOdds() {
-    // Método legado - mantido para compatibilidade
-    _winProbability = 50.0 + (DateTime.now().millisecond % 40 - 20);
-    notifyListeners();
-  }
-
   // ========== FIREBASE INTEGRATION ==========
 
   /// Initialize Firebase Auth listener
@@ -583,8 +478,15 @@ class GameProvider with ChangeNotifier {
         });
   }
 
+  /// Check if current user is the Host of the session
+  bool get isCurrentUserHost {
+    if (_currentGame == null || _firebaseUser == null) return false;
+    return _firebaseUser!.uid == _currentGame!.hostId;
+  }
+
   /// Join or create a real-time game session
   /// Subscribes to Firestore stream for automatic UI updates
+  /// CRITICAL: Detects 'canceled' status and emits event to all participants
   Future<void> joinSession(String sessionId) async {
     _activeSessionId = sessionId;
 
@@ -596,6 +498,16 @@ class GameProvider with ChangeNotifier {
       GameSession? session,
     ) {
       if (session != null) {
+        // CRITICAL: Check if Host has canceled the match
+        if (session.status == 'canceled') {
+          debugPrint(
+            'NUCLEAR FIX: Session canceled by Host! Redirecting to Home...',
+          );
+          _sessionCanceledController.add(true); // Notify all listeners
+          leaveSession();
+          return;
+        }
+
         // Update game session
         _currentGame = session;
 
@@ -625,23 +537,62 @@ class GameProvider with ChangeNotifier {
   }
 
   /// End game and distribute XP to winner
-  Future<void> endGameWithFirebase({required String winnerId}) async {
+  /// CRITICAL: Creates and broadcasts match result to all participants
+  Future<void> endGameWithFirebase({
+    required String winnerId,
+    required String winningHandType,
+  }) async {
     if (_currentGame == null || _activeSessionId == null) return;
 
     try {
-      // 1. Distribute XP to all players atomically (batch write)
       final participantIds = _currentGame!.players
           .map((p) => p.userId)
           .toList();
+
+      // 1. Get current XP before batch update (for XP tracking)
+      final previousXP = <String, int>{};
+      for (final player in _currentGame!.players) {
+        previousXP[player.userId] =
+            0; // We'll update this from Firestore if needed
+      }
+
+      // 2. Distribute XP to all players atomically (batch write)
       await _firestoreService.recordMatchResultsBatch(
         winnerId: winnerId,
         participantIds: participantIds,
       );
 
-      // 2. Mark session as finished
+      // 3. Build match result for UI
+      final winnerPlayer = _currentGame!.players.firstWhere(
+        (p) => p.userId == winnerId,
+      );
+
+      final participantResults = <String, XPResult>{};
+      for (final player in _currentGame!.players) {
+        final isWinner = player.userId == winnerId;
+        final xpGained = isWinner ? 500 : 100;
+        final previousUserXP = previousXP[player.userId] ?? 0;
+        final newXP = previousUserXP + xpGained;
+
+        participantResults[player.userId] = XPResult(
+          username: player.username,
+          previousXP: previousUserXP,
+          currentXP: newXP,
+        );
+      }
+
+      // 4. Create match result (broadcast to all devices via provider)
+      _matchResult = MatchResult(
+        winnerUserId: winnerId,
+        winnerUsername: winnerPlayer.username,
+        winningHandType: winningHandType,
+        participantResults: participantResults,
+      );
+
+      // 5. Mark session as finished
       await _firestoreService.updateGameStatus(_activeSessionId!, 'finished');
 
-      // 3. Update local state
+      // 6. Update local state
       _currentGame = _currentGame!.copyWith(
         isCompleted: true,
         winnerId: winnerId,
@@ -650,8 +601,14 @@ class GameProvider with ChangeNotifier {
       notifyListeners();
     } catch (e) {
       debugPrint('Error ending game: $e');
-      rethrow; // Critical error - caller should handle
+      rethrow;
     }
+  }
+
+  /// Clear match result after displaying overlay
+  void clearMatchResult() {
+    _matchResult = null;
+    notifyListeners();
   }
 
   /// Leave current session
@@ -661,6 +618,46 @@ class GameProvider with ChangeNotifier {
     _activeSessionId = null;
     _currentGame = null;
     notifyListeners();
+  }
+
+  /// Cancel match without determining a winner - no XP distributed
+  /// HOST ONLY: Sets status to 'canceled' (not 'finished') to signal all participants
+  /// All participants detect 'canceled' status via stream and are redirected to home
+  Future<void> cancelGameWithoutWinner() async {
+    if (_currentGame == null || _activeSessionId == null) return;
+    if (!isCurrentUserHost) {
+      debugPrint('ERROR: Only Host can cancel the match!');
+      return;
+    }
+
+    try {
+      // Update session status to 'canceled' (special state, not 'finished')
+      // This is detected by all participants via the stream listener
+      final db = FirebaseFirestore.instance;
+      await db.collection('gameSessions').doc(_activeSessionId).update({
+        'status': 'canceled', // CRITICAL: 'canceled' instead of 'finished'
+      });
+
+      // Create a "cancelled" match result to show in the overlay
+      _matchResult = MatchResult(
+        winnerUserId: '', // Empty = cancelled
+        winnerUsername: 'Partida Cancelada',
+        winningHandType: 'Sem Vencedor',
+        participantResults: {}, // No XP changes
+      );
+
+      notifyListeners();
+
+      // Brief delay to let the overlay show, then clear and leave
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Clear session state completely
+      await leaveSession();
+      _activeSessionId =
+          null; // CRITICAL: Clear to prevent re-login resuming game
+    } catch (e) {
+      debugPrint('Error canceling game: $e');
+    }
   }
 
   // ========== Helpers ==========
@@ -676,7 +673,6 @@ class GameProvider with ChangeNotifier {
     _currentSmallBlind = 5;
     _currentBigBlind = 10;
     _dealerIndex = 0;
-    _winProbability = 0.0;
   }
 
   void resetSetup() {
@@ -689,6 +685,7 @@ class GameProvider with ChangeNotifier {
     _blindTimer?.cancel();
     _authSubscription?.cancel();
     _sessionSubscription?.cancel();
+    _sessionCanceledController.close();
     super.dispose();
   }
 }

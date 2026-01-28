@@ -18,9 +18,10 @@ class GameSession {
   isProgressiveBlind; // true = Tournament (blinds increase), false = Cash Game (fixed blinds)
 
   // CRITICAL MULTIPLAYER FIELDS: Synced from Firestore
+  final String hostId; // User ID of the Host (who controls the game)
   final List<String> boardCards; // Flop, Turn, River cards visible to all
   final int dealerIndex; // Current dealer button position
-  final String status; // 'waiting', 'playing', 'finished'
+  final String status; // 'waiting', 'playing', 'finished', 'canceled'
 
   GameSession({
     required this.id,
@@ -32,6 +33,7 @@ class GameSession {
     required this.gameMode,
     this.isCompleted = false,
     this.isProgressiveBlind = true, // Default to tournament mode
+    required this.hostId,
     this.boardCards = const [],
     this.dealerIndex = 0,
     this.status = 'waiting',
@@ -57,6 +59,7 @@ class GameSession {
     GameMode? gameMode,
     bool? isCompleted,
     bool? isProgressiveBlind,
+    String? hostId,
     List<String>? boardCards,
     int? dealerIndex,
     String? status,
@@ -71,6 +74,7 @@ class GameSession {
       gameMode: gameMode ?? this.gameMode,
       isCompleted: isCompleted ?? this.isCompleted,
       isProgressiveBlind: isProgressiveBlind ?? this.isProgressiveBlind,
+      hostId: hostId ?? this.hostId,
       boardCards: boardCards ?? this.boardCards,
       dealerIndex: dealerIndex ?? this.dealerIndex,
       status: status ?? this.status,
@@ -88,6 +92,7 @@ class GameSession {
       'gameMode': gameMode.toString().split('.').last,
       'isCompleted': isCompleted,
       'isProgressiveBlind': isProgressiveBlind,
+      'hostId': hostId,
       'boardCards': boardCards,
       'currentDealer': dealerIndex,
       'status': status,
@@ -109,6 +114,7 @@ class GameSession {
           : GameMode.manager,
       isCompleted: json['isCompleted'] as bool? ?? false,
       isProgressiveBlind: json['isProgressiveBlind'] as bool? ?? true,
+      hostId: json['hostId'] as String? ?? '',
       boardCards: (json['boardCards'] as List?)?.cast<String>() ?? [],
       dealerIndex: json['currentDealer'] as int? ?? 0,
       status: json['status'] as String? ?? 'waiting',

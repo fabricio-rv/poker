@@ -16,6 +16,7 @@ class GameService {
     required bool isRanked,
     required double buyInAmount,
     required bool isProgressiveBlind,
+    required String hostUserId,
   }) async {
     await Future.delayed(const Duration(milliseconds: 300));
 
@@ -26,6 +27,7 @@ class GameService {
       isRanked: isRanked,
       buyInAmount: buyInAmount,
       isProgressiveBlind: isProgressiveBlind,
+      hostId: hostUserId,
     );
 
     _mockGames.add(game);
