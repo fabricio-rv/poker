@@ -117,7 +117,7 @@ class CardPickerSheet {
                 _buildRankButton(context, 'K'),
                 _buildRankButton(context, 'Q'),
                 _buildRankButton(context, 'J'),
-                _buildRankButton(context, 'T'),
+                _buildRankButton(context, 'T', displayAs: '10'),
                 _buildRankButton(context, '9'),
                 _buildRankButton(context, '8'),
                 _buildRankButton(context, '7'),
@@ -135,7 +135,12 @@ class CardPickerSheet {
     );
   }
 
-  static Widget _buildRankButton(BuildContext context, String rank) {
+  static Widget _buildRankButton(
+    BuildContext context,
+    String rank, {
+    String? displayAs,
+  }) {
+    final displayText = displayAs ?? rank;
     return ElevatedButton(
       onPressed: () => Navigator.pop(context, rank),
       style: ElevatedButton.styleFrom(
@@ -145,7 +150,7 @@ class CardPickerSheet {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
       child: Text(
-        rank,
+        displayText,
         style: const TextStyle(
           fontSize: 24,
           fontWeight: FontWeight.bold,

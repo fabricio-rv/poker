@@ -10,7 +10,9 @@ class PokerPlayerHand {
 class PokerHandEvaluation {
   final PokerPlayerHand player;
   final poker.MadeHand madeHand;
-  final List<poker.Card> bestCards;
+  final List<poker.Card> bestCards; // As 5 cartas que formam o jogo
+  final List<poker.Card>
+  structuredCards; // Cartas ordenadas por força (ex: Trinca antes do Par)
   final String translatedType;
   final String description;
 
@@ -18,6 +20,7 @@ class PokerHandEvaluation {
     required this.player,
     required this.madeHand,
     required this.bestCards,
+    required this.structuredCards,
     required this.translatedType,
     required this.description,
   });
@@ -58,26 +61,40 @@ class PokerLogicService {
 
       final playerCards = player.cards.map(_parseCard).toList();
       final allCards = [...playerCards, ...board];
+
+      // 1. Encontra a melhor combinação de 5 cartas
       final bestCards = _findBestFiveCards(allCards);
+
+      // 2. Cria o objeto MadeHand do pacote poker
       final madeHand = poker.MadeHand.best(
         poker.ImmutableCardSet.of(bestCards),
       );
-      final translatedType = _translateHandType(madeHand, bestCards);
-      final description = _buildHandDescription(madeHand, bestCards);
+
+      // 3. ESTRUTURA AS CARTAS (CORREÇÃO FUNDAMENTAL)
+      // Ordena por importância: Trinca antes de Par, Par antes de Kicker
+      final structuredCards = _getStructuredCards(madeHand, bestCards);
+
+      // 4. Traduz e Descreve
+      final translatedType = _getHandRankPortuguese(madeHand.type);
+      final description = _buildHandDescription(madeHand, structuredCards);
 
       return PokerHandEvaluation(
         player: player,
         madeHand: madeHand,
         bestCards: bestCards,
+        structuredCards: structuredCards,
         translatedType: translatedType,
         description: description,
       );
     }).toList();
 
-    evaluations.sort((a, b) => b.madeHand.power.compareTo(a.madeHand.power));
-    final bestPower = evaluations.first.madeHand.power;
+    // Ordena as avaliações (Vencedor no índice 0)
+    evaluations.sort((a, b) => _compareEvaluations(b, a));
+
+    // Verifica empates
+    final bestEval = evaluations.first;
     final tied = evaluations
-        .where((e) => e.madeHand.power == bestPower)
+        .where((e) => _compareEvaluations(e, bestEval) == 0)
         .toList();
 
     return PokerShowdownResult(
@@ -88,314 +105,307 @@ class PokerLogicService {
     );
   }
 
+  /// Avalia uma mão única (usado na calculadora de probabilidade)
+  PokerHandEvaluation evaluateHand({
+    required String playerName,
+    required List<String> playerCards,
+    required List<String> boardCards,
+  }) {
+    final pCards = playerCards.map(_parseCard).toList();
+    final bCards = boardCards.map(_parseCard).toList();
+    final allCards = [...pCards, ...bCards];
+
+    final bestCards = _findBestFiveCards(allCards);
+    final madeHand = poker.MadeHand.best(poker.ImmutableCardSet.of(bestCards));
+
+    final structuredCards = _getStructuredCards(madeHand, bestCards);
+    final translatedType = _getHandRankPortuguese(madeHand.type);
+    final description = _buildHandDescription(madeHand, structuredCards);
+
+    return PokerHandEvaluation(
+      player: PokerPlayerHand(name: playerName, cards: playerCards),
+      madeHand: madeHand,
+      bestCards: bestCards,
+      structuredCards: structuredCards,
+      translatedType: translatedType,
+      description: description,
+    );
+  }
+
+  /// Compara duas mãos avaliadas (público)
+  /// Retorna: >0 se A vence, <0 se B vence, 0 se empate
+  int compareHands(PokerHandEvaluation a, PokerHandEvaluation b) {
+    return _compareEvaluations(a, b);
+  }
+
+  // --- LÓGICA DE COMPARAÇÃO (O JUIZ) ---
+
+  /// Compara duas avaliações. Retorna >0 se A ganha, <0 se B ganha, 0 se empate.
+  int _compareEvaluations(PokerHandEvaluation a, PokerHandEvaluation b) {
+    // 1. Compara a força do Tipo da Mão (ex: Full House > Flush)
+    final strengthA = _getHandTypeStrength(a.madeHand.type);
+    final strengthB = _getHandTypeStrength(b.madeHand.type);
+
+    if (strengthA != strengthB) {
+      return strengthA.compareTo(strengthB);
+    }
+
+    // 2. Se o tipo é igual, compara as CARTAS ESTRUTURADAS carta por carta
+    for (int i = 0; i < 5; i++) {
+      final rankA = _getRankValue(a.structuredCards[i].rank);
+      final rankB = _getRankValue(b.structuredCards[i].rank);
+
+      final diff = rankA.compareTo(rankB);
+      if (diff != 0) {
+        return diff; // Encontrou a carta de desempate
+      }
+    }
+
+    return 0; // Empate total
+  }
+
+  /// Reorganiza as cartas baseado na força lógica da mão (Frequência > Valor)
+  List<poker.Card> _getStructuredCards(
+    poker.MadeHand hand,
+    List<poker.Card> cards,
+  ) {
+    final rankCounts = <poker.Rank, int>{};
+    for (final c in cards) {
+      rankCounts[c.rank] = (rankCounts[c.rank] ?? 0) + 1;
+    }
+
+    final sortedRanks = rankCounts.keys.toList()
+      ..sort((a, b) {
+        final countA = rankCounts[a]!;
+        final countB = rankCounts[b]!;
+        // 1. Quem tem mais cartas iguais vem primeiro (Trinca > Par > Kicker)
+        if (countA != countB) {
+          return countB.compareTo(countA);
+        }
+        // 2. Se a quantidade é igual, vale o Rank maior (Ás > Rei)
+        return _getRankValue(b).compareTo(_getRankValue(a));
+      });
+
+    final structured = <poker.Card>[];
+    for (final rank in sortedRanks) {
+      final cardsWithRank = cards.where((c) => c.rank == rank).toList();
+      structured.addAll(cardsWithRank);
+    }
+
+    return structured;
+  }
+
+  int _getRankValue(poker.Rank rank) {
+    // Garante que Ás (index 12 no pacote) seja tratado como 14 (o maior)
+    if (rank.index == 12) return 14;
+    return rank.index + 2;
+  }
+
+  int _getHandTypeStrength(poker.MadeHandType type) {
+    switch (type) {
+      case poker.MadeHandType.highcard:
+        return 0;
+      case poker.MadeHandType.pair:
+        return 1;
+      case poker.MadeHandType.twoPairs:
+        return 2;
+      case poker.MadeHandType.trips:
+        return 3;
+      case poker.MadeHandType.straight:
+        return 4;
+      case poker.MadeHandType.flush:
+        return 5;
+      case poker.MadeHandType.fullHouse:
+        return 6;
+      case poker.MadeHandType.quads:
+        return 7;
+      case poker.MadeHandType.straightFlush:
+        return 8;
+    }
+  }
+
+  // --- TRADUÇÃO E TEXTOS ---
+
+  String _getHandRankPortuguese(poker.MadeHandType type) {
+    switch (type) {
+      case poker.MadeHandType.highcard:
+        return 'Carta Alta';
+      case poker.MadeHandType.pair:
+        return 'Um Par';
+      case poker.MadeHandType.twoPairs:
+        return 'Dois Pares';
+      case poker.MadeHandType.trips:
+        return 'Trinca';
+      case poker.MadeHandType.straight:
+        return 'Sequência';
+      case poker.MadeHandType.flush:
+        return 'Flush';
+      case poker.MadeHandType.fullHouse:
+        return 'Full House';
+      case poker.MadeHandType.quads:
+        return 'Quadra';
+      case poker.MadeHandType.straightFlush:
+        return 'Straight Flush';
+    }
+  }
+
+  String _buildHandDescription(
+    poker.MadeHand hand,
+    List<poker.Card> structuredCards,
+  ) {
+    // Usa as cartas já estruturadas para descrever corretamente
+    switch (hand.type) {
+      case poker.MadeHandType.highcard:
+        final high = _rankPt(structuredCards[0].rank);
+        final kicker = _rankPt(structuredCards[1].rank);
+        return 'Carta Alta ($high) com Kicker $kicker';
+
+      case poker.MadeHandType.pair:
+        final pairRank = _rankPt(structuredCards[0].rank);
+        final kicker = _rankPt(structuredCards[2].rank);
+        return 'Par de $pairRank (Kicker $kicker)';
+
+      case poker.MadeHandType.twoPairs:
+        final highPair = _rankPt(structuredCards[0].rank);
+        final lowPair = _rankPt(structuredCards[2].rank);
+        return 'Dois Pares: $highPair e $lowPair';
+
+      case poker.MadeHandType.trips:
+        final rank = _rankPt(structuredCards[0].rank);
+        return 'Trinca de $rank';
+
+      case poker.MadeHandType.straight:
+        final high = _rankPt(structuredCards[0].rank);
+        return 'Sequência até $high';
+
+      case poker.MadeHandType.flush:
+        final high = _rankPt(structuredCards[0].rank);
+        return 'Flush com $high maior';
+
+      case poker.MadeHandType.fullHouse:
+        final trips = _rankPt(structuredCards[0].rank);
+        final pair = _rankPt(structuredCards[3].rank);
+        return 'Full House de $trips com $pair';
+
+      case poker.MadeHandType.quads:
+        final rank = _rankPt(structuredCards[0].rank);
+        return 'Quadra de $rank';
+
+      case poker.MadeHandType.straightFlush:
+        return 'Straight Flush';
+    }
+  }
+
   String getWinningExplanation({required PokerShowdownResult result}) {
     if (result.isTie) {
       final names = result.tiedPlayers.map((e) => e.player.name).join(' e ');
-      return 'Empate entre $names. Mãos: '
-          '${result.tiedPlayers.map((e) => e.description).join(' | ')}';
+      return 'Empate entre $names.';
     }
 
     final winner = result.winner;
     final loser = result.evaluations.firstWhere(
       (e) => e.player.name != winner.player.name,
+      orElse: () => result.evaluations.last,
     );
 
-    // TASK 3: Enhanced explanation format with card details
-    final winnerCards = winner.player.cards
-        .map((c) => _formatCardDisplay(c))
-        .join(', ');
+    final sb = StringBuffer();
+    sb.writeln('Vencedor: ${winner.player.name}');
+    sb.writeln('Mão: ${winner.description}');
 
-    return 'Vencedor: ${winner.player.name} com ${winner.description} ($winnerCards). '
-        'Venceu de: ${loser.player.name} que tinha ${loser.description}.';
+    if (winner.madeHand.type != loser.madeHand.type) {
+      sb.write(
+        'Motivo: ${winner.translatedType} vence ${loser.translatedType}.',
+      );
+    } else {
+      sb.write(
+        'Motivo: ${winner.player.name} tem cartas de desempate (kickers) maiores.',
+      );
+    }
+
+    return sb.toString();
   }
 
-  /// TASK 3: Format card for display (e.g., "As" -> "A ♠")
-  String _formatCardDisplay(String cardStr) {
-    if (cardStr.length < 2) return cardStr;
+  // --- HELPERS ---
 
-    final rankRaw = cardStr.substring(0, cardStr.length - 1).toUpperCase();
-    final suitChar = cardStr[cardStr.length - 1].toLowerCase();
+  poker.Card _parseCard(String value) => poker.Card.parse(value);
 
-    // Convert rank using map with fallback
-    final rank = rankStringToPt(rankRaw);
-
-    // Convert suit to symbol
-    final suit = _getSuitSymbol(suitChar);
-
-    return '$rank $suit';
+  String _rankPt(poker.Rank rank) {
+    final char = _rankToChar(rank);
+    return char == 'T' ? '10' : _translateRankName(char);
   }
 
-  /// Convert suit character to symbol
-  String _getSuitSymbol(String suitChar) {
-    switch (suitChar.toLowerCase()) {
-      case 'h':
-        return '♥';
-      case 'd':
-        return '♦';
-      case 'c':
-        return '♣';
-      case 's':
-        return '♠';
+  String _translateRankName(String char) {
+    switch (char) {
+      case 'A':
+        return 'Ás';
+      case 'K':
+        return 'Rei';
+      case 'Q':
+        return 'Dama';
+      case 'J':
+        return 'Valete';
+      case 'T':
+        return '10';
       default:
-        return suitChar;
+        return char;
     }
   }
 
-  poker.Card _parseCard(String value) {
-    return poker.Card.parse(value);
+  String _rankToChar(poker.Rank rank) {
+    const ranks = [
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      'T',
+      'J',
+      'Q',
+      'K',
+      'A',
+    ];
+    if (rank.index >= 0 && rank.index < ranks.length) {
+      return ranks[rank.index];
+    }
+    return '?';
   }
 
   List<poker.Card> _findBestFiveCards(List<poker.Card> cards) {
-    if (cards.length < 5) {
-      throw ArgumentError('É necessário pelo menos 5 cartas.');
-    }
+    if (cards.length < 5) return cards;
 
     poker.MadeHand? bestHand;
     List<poker.Card> bestCombo = [];
 
-    for (final combo in _combinations(cards, 5)) {
+    // Gera combinações simples de 5 cartas
+    final combos = _combinations(cards, 5);
+    for (final combo in combos) {
       final hand = poker.MadeHand.best(poker.ImmutableCardSet.of(combo));
       if (bestHand == null || hand.power > bestHand.power) {
         bestHand = hand;
         bestCombo = combo;
       }
     }
-
     return bestCombo;
   }
 
-  List<List<poker.Card>> _combinations(List<poker.Card> cards, int k) {
-    final result = <List<poker.Card>>[];
-
-    void backtrack(int start, List<poker.Card> current) {
-      if (current.length == k) {
-        result.add(List<poker.Card>.from(current));
+  List<List<poker.Card>> _combinations(List<poker.Card> list, int k) {
+    var combos = <List<poker.Card>>[];
+    void f(List<poker.Card> l, int c, int start) {
+      if (c == 0) {
+        combos.add(List.from(l));
         return;
       }
-      for (var i = start; i < cards.length; i++) {
-        current.add(cards[i]);
-        backtrack(i + 1, current);
-        current.removeLast();
+      for (int i = start; i <= list.length - c; i++) {
+        l.add(list[i]);
+        f(l, c - 1, i + 1);
+        l.removeLast();
       }
     }
 
-    backtrack(0, []);
-    return result;
-  }
-
-  String _translateHandType(poker.MadeHand hand, List<poker.Card> bestCards) {
-    final english = _englishType(hand, bestCards);
-    return _translateEnglishHandType(english);
-  }
-
-  String _englishType(poker.MadeHand hand, List<poker.Card> bestCards) {
-    if (hand.type == poker.MadeHandType.straightFlush) {
-      final highStraight = _getStraightHighRank(bestCards);
-      if (highStraight == poker.Rank.ace && _containsTen(bestCards)) {
-        return 'Royal Flush';
-      }
-      return 'Straight Flush';
-    }
-
-    switch (hand.type) {
-      case poker.MadeHandType.quads:
-        return 'Four of a Kind';
-      case poker.MadeHandType.fullHouse:
-        return 'Full House';
-      case poker.MadeHandType.flush:
-        return 'Flush';
-      case poker.MadeHandType.straight:
-        return 'Straight';
-      case poker.MadeHandType.trips:
-        return 'Three of a Kind';
-      case poker.MadeHandType.twoPairs:
-        return 'Two Pair';
-      case poker.MadeHandType.pair:
-        return 'Pair';
-      case poker.MadeHandType.highcard:
-      case poker.MadeHandType.straightFlush:
-        return 'High Card';
-    }
-  }
-
-  String _translateEnglishHandType(String english) {
-    const map = {
-      'Royal Flush': 'Royal Flush',
-      'Straight Flush': 'Straight Flush',
-      'Four of a Kind': 'Quadra',
-      'Full House': 'Full House',
-      'Flush': 'Flush',
-      'Straight': 'Sequência',
-      'Three of a Kind': 'Trinca',
-      'Two Pair': 'Dois Pares',
-      'Pair': 'Par',
-      'High Card': 'Carta Alta',
-    };
-
-    return map[english] ?? english;
-  }
-
-  String _buildHandDescription(poker.MadeHand hand, List<poker.Card> cards) {
-    final english = _englishType(hand, cards);
-    final translated = _translateEnglishHandType(english);
-
-    final rankCounts = <poker.Rank, int>{};
-    for (final card in cards) {
-      rankCounts[card.rank] = (rankCounts[card.rank] ?? 0) + 1;
-    }
-
-    poker.Rank? highCard;
-    final sortedRanks = rankCounts.keys.toList()
-      ..sort((a, b) => b.index.compareTo(a.index));
-    highCard = sortedRanks.isNotEmpty ? sortedRanks.first : null;
-
-    switch (hand.type) {
-      case poker.MadeHandType.quads:
-        final quadRank = _findRankByCount(rankCounts, 4);
-        return '$translated de ${_rankPt(quadRank)}';
-      case poker.MadeHandType.fullHouse:
-        // Para Full House, precisa encontrar a trinca (3) e o par (2)
-        // Ordena por frequência primeiro, depois por rank
-        final ranksOrdered = rankCounts.entries.toList()
-          ..sort((a, b) {
-            if (a.value != b.value) {
-              return b.value.compareTo(a.value); // Maior frequência primeiro
-            }
-            return b.key.index.compareTo(a.key.index); // Maior rank primeiro
-          });
-
-        final tripsRank = ranksOrdered.isNotEmpty ? ranksOrdered[0].key : null;
-        final pairRank = ranksOrdered.length > 1 ? ranksOrdered[1].key : null;
-        return '$translated de ${_rankPt(tripsRank)} com ${_rankPt(pairRank)}';
-      case poker.MadeHandType.flush:
-        return '$translated com ${_rankPt(highCard)}';
-      case poker.MadeHandType.straight:
-        final straightHigh = _getStraightHighRank(cards);
-        return '$translated até ${_rankPt(straightHigh)}';
-      case poker.MadeHandType.trips:
-        final tripsRank = _findRankByCount(rankCounts, 3);
-        return '$translated de ${_rankPt(tripsRank)}';
-      case poker.MadeHandType.twoPairs:
-        final pairs = _findRanksByCount(rankCounts, 2)
-          ..sort((a, b) => b.index.compareTo(a.index));
-        if (pairs.length >= 2) {
-          return '$translated: ${_rankPt(pairs[0])} e ${_rankPt(pairs[1])}';
-        }
-        return translated;
-      case poker.MadeHandType.pair:
-        final pairRank = _findRankByCount(rankCounts, 2);
-        return '$translated de ${_rankPt(pairRank)}';
-      case poker.MadeHandType.highcard:
-        return '$translated ${_rankPt(highCard)}';
-      case poker.MadeHandType.straightFlush:
-        final straightHigh = _getStraightHighRank(cards);
-        if (english == 'Royal Flush') {
-          return 'Royal Flush';
-        }
-        return '$translated de ${_rankPt(straightHigh)}';
-    }
-  }
-
-  poker.Rank? _findRankByCount(Map<poker.Rank, int> counts, int count) {
-    final ranks =
-        counts.entries.where((e) => e.value == count).map((e) => e.key).toList()
-          ..sort((a, b) => b.index.compareTo(a.index));
-    return ranks.isNotEmpty ? ranks.first : null;
-  }
-
-  List<poker.Rank> _findRanksByCount(Map<poker.Rank, int> counts, int count) {
-    final ranks = counts.entries
-        .where((e) => e.value == count)
-        .map((e) => e.key)
-        .toList();
-    return ranks;
-  }
-
-  poker.Rank _getStraightHighRank(List<poker.Card> cards) {
-    final ranks = cards.map((c) => c.rank).toSet().toList()
-      ..sort((a, b) => a.index.compareTo(b.index));
-
-    final hasWheel =
-        ranks.contains(poker.Rank.ace) &&
-        ranks.contains(poker.Rank.deuce) &&
-        ranks.contains(poker.Rank.trey) &&
-        ranks.contains(poker.Rank.four) &&
-        ranks.contains(poker.Rank.five);
-
-    if (hasWheel) {
-      return poker.Rank.five;
-    }
-
-    return ranks.isNotEmpty ? ranks.last : poker.Rank.deuce;
-  }
-
-  bool _containsTen(List<poker.Card> cards) {
-    return cards.any((c) => c.rank == poker.Rank.ten);
-  }
-
-  /// Mapa de conversão de ranks para Português
-  /// Garante que 'T' sempre será exibido como '10'
-  static const Map<String, String> rankToPortuguese = {
-    'A': 'Ás',
-    'K': 'Rei',
-    'Q': 'Dama',
-    'J': 'Valete',
-    'T': '10', // CRUCIAL: T deve sempre ser exibido como 10
-    '10': '10',
-    '9': '9',
-    '8': '8',
-    '7': '7',
-    '6': '6',
-    '5': '5',
-    '4': '4',
-    '3': '3',
-    '2': '2',
-  };
-
-  String _rankPt(poker.Rank? rank) {
-    if (rank == null) return '';
-
-    switch (rank) {
-      case poker.Rank.ace:
-        return 'Ás';
-      case poker.Rank.king:
-        return 'Rei';
-      case poker.Rank.queen:
-        return 'Dama';
-      case poker.Rank.jack:
-        return 'Valete';
-      case poker.Rank.ten:
-        return '10'; // T sempre retorna '10'
-      case poker.Rank.nine:
-        return '9';
-      case poker.Rank.eight:
-        return '8';
-      case poker.Rank.seven:
-        return '7';
-      case poker.Rank.six:
-        return '6';
-      case poker.Rank.five:
-        return '5';
-      case poker.Rank.four:
-        return '4';
-      case poker.Rank.trey:
-        return '3';
-      case poker.Rank.deuce:
-        return '2';
-    }
-  }
-
-  /// TASK 3: Converte string de rank para Português com fallback robusto
-  /// Nunca retorna vazio - garante que 'T' sempre vira '10'
-  String rankStringToPt(String rankStr) {
-    if (rankStr.isEmpty) return '';
-
-    final normalized = rankStr.toUpperCase().trim();
-
-    // CRITICAL: Ensure 'T' always becomes '10'
-    if (normalized == 'T') return '10';
-
-    // Try map lookup, fallback to normalized value
-    return rankToPortuguese[normalized] ?? normalized;
+    f([], k, 0);
+    return combos;
   }
 }

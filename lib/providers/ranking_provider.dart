@@ -43,14 +43,28 @@ class RankingProvider with ChangeNotifier {
   void _sortByCategory(RankingCategory category) {
     switch (category) {
       case RankingCategory.overall:
+        // TASK 2: Sort by Level (desc), then TotalXP (desc), then Victories (desc)
         _rankedUsers = List.from(_allUsers)
-          ..sort((a, b) => b.rankingScore.compareTo(a.rankingScore));
+          ..sort((a, b) {
+            // First compare by level
+            final levelCompare = b.level.compareTo(a.level);
+            if (levelCompare != 0) return levelCompare;
+
+            // If levels are equal, compare by total XP
+            final xpCompare = b.currentXP.compareTo(a.currentXP);
+            if (xpCompare != 0) return xpCompare;
+
+            // If XP is also equal, compare by victories
+            return b.totalWins.compareTo(a.totalWins);
+          });
         break;
       case RankingCategory.wins:
+        // TASK 2: Sort strictly by victories
         _rankedUsers = List.from(_allUsers)
           ..sort((a, b) => b.totalWins.compareTo(a.totalWins));
         break;
       case RankingCategory.xp:
+        // TASK 2: Sort strictly by totalXP
         _rankedUsers = List.from(_allUsers)
           ..sort((a, b) => b.currentXP.compareTo(a.currentXP));
         break;

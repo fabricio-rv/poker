@@ -16,7 +16,6 @@ class GameSetupScreen extends StatefulWidget {
 
 class _GameSetupScreenState extends State<GameSetupScreen> {
   int _currentStep = 0;
-  final _buyInController = TextEditingController();
   List<User> _allUsers = [];
   bool _isLoadingUsers = true;
 
@@ -28,7 +27,6 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
 
   @override
   void dispose() {
-    _buyInController.dispose();
     super.dispose();
   }
 
@@ -49,10 +47,10 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
         builder: (context, gameProvider, child) {
           return Column(
             children: [
-              // Step indicator
+              // Step indicator (3 steps)
               _buildStepIndicator(),
 
-              // Content
+              // Content based on current step
               Expanded(child: _buildStepContent(gameProvider)),
 
               // Navigation buttons
@@ -64,6 +62,7 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
     );
   }
 
+  // ==================== STEP INDICATOR ====================
   Widget _buildStepIndicator() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -74,9 +73,7 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
           _buildStepLine(0),
           _buildStepDot(1, 'Jogadores'),
           _buildStepLine(1),
-          _buildStepDot(2, 'Aposta'),
-          _buildStepLine(2),
-          _buildStepDot(3, 'Fichas'),
+          _buildStepDot(2, 'Fichas'),
         ],
       ),
     );
@@ -104,20 +101,19 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
               child: Text(
                 '${step + 1}',
                 style: AppTextStyles.bodyMedium.copyWith(
-                  color: isActive ? AppColors.white : Colors.grey,
+                  color: isActive ? Colors.white : Colors.grey,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 4),
-          FittedBox(
-            child: Text(
-              label,
-              style: AppTextStyles.caption.copyWith(
-                color: isActive ? AppColors.white : Colors.grey,
-              ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: AppTextStyles.caption.copyWith(
+              color: isCurrent ? AppColors.gold : Colors.grey,
             ),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -126,319 +122,340 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
 
   Widget _buildStepLine(int step) {
     final isActive = _currentStep > step;
-
-    return Expanded(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 32),
       child: Container(
         height: 2,
-        margin: const EdgeInsets.only(bottom: 20),
         color: isActive ? AppColors.primary : Colors.grey,
       ),
     );
   }
 
+  // ==================== STEP CONTENT ====================
   Widget _buildStepContent(GameProvider gameProvider) {
-    if (_isLoadingUsers && _currentStep == 1) {
+    if (_isLoadingUsers) {
       return const Center(child: CircularProgressIndicator());
     }
 
     switch (_currentStep) {
       case 0:
-        return _buildModeSelection(gameProvider);
+        return _buildModoStep(gameProvider);
       case 1:
-        return _buildPlayerSelection(gameProvider);
+        return _buildJogadoresStep(gameProvider);
       case 2:
-        return _buildBetConfiguration(gameProvider);
-      case 3:
-        return _buildChipCalculation(gameProvider);
+        return _buildFichasStep(gameProvider);
       default:
-        return const SizedBox();
+        return const Center(child: Text('Passo inválido'));
     }
   }
 
-  Widget _buildModeSelection(GameProvider gameProvider) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
+  // ==================== STEP 1: MODO ====================
+  Widget _buildModoStep(GameProvider gameProvider) {
+    return Center(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text('Selecione o Modo de Jogo', style: AppTextStyles.heading2),
+          const Icon(Icons.gamepad, size: 80, color: AppColors.gold),
           const SizedBox(height: 24),
-
-          _buildModeCard(
-            gameProvider,
-            GameMode.multiplayer,
-            'Multiplayer',
-            'Cada um no seu celular',
-            Icons.smartphone,
-            'Cada jogador acompanha suas cartas e probabilidades em tempo real.',
+          Text(
+            'Escolha o Modo de Jogo',
+            style: AppTextStyles.heading2,
+            textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 16),
-
-          _buildModeCard(
-            gameProvider,
-            GameMode.manager,
-            'Gerenciador',
-            'Apenas um celular',
-            Icons.manage_accounts,
-            'Controle blinds, eliminações e rebuys em um único dispositivo.',
+          const SizedBox(height: 32),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              children: [
+                // Multiplayer option
+                _buildModoCard(
+                  title: 'Multiplayer',
+                  subtitle:
+                      'Cada jogador vê suas cartas\nHost controla o board',
+                  icon: Icons.people,
+                  isSelected: gameProvider.selectedMode == GameMode.multiplayer,
+                  onTap: () => gameProvider.selectMode(GameMode.multiplayer),
+                ),
+                const SizedBox(height: 16),
+                // Manager option
+                _buildModoCard(
+                  title: 'Gerenciador',
+                  subtitle: 'Modo Juiz\nVocê controla tudo',
+                  icon: Icons.gavel,
+                  isSelected: gameProvider.selectedMode == GameMode.manager,
+                  onTap: () => gameProvider.selectMode(GameMode.manager),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildModeCard(
-    GameProvider gameProvider,
-    GameMode mode,
-    String title,
-    String subtitle,
-    IconData icon,
-    String description,
-  ) {
-    final isSelected = gameProvider.selectedMode == mode;
-
-    return Card(
-      color: isSelected ? AppColors.primary : AppColors.cardBackground,
-      child: InkWell(
-        onTap: () => gameProvider.selectMode(mode),
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+  Widget _buildModoCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary : AppColors.cardBackground,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? AppColors.gold : Colors.transparent,
+            width: 2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 48,
+              color: isSelected ? AppColors.gold : Colors.grey,
+            ),
+            const SizedBox(width: 20),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    icon,
-                    size: 40,
-                    color: isSelected ? AppColors.gold : AppColors.white,
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title, style: AppTextStyles.heading3),
-                        Text(
-                          subtitle,
-                          style: AppTextStyles.bodyMedium.copyWith(
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ],
+                  Text(
+                    title,
+                    style: AppTextStyles.heading3.copyWith(
+                      color: isSelected ? AppColors.gold : Colors.white,
                     ),
                   ),
-                  if (isSelected)
-                    const Icon(
-                      Icons.check_circle,
-                      color: AppColors.gold,
-                      size: 32,
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: AppTextStyles.caption.copyWith(
+                      color: Colors.white70,
                     ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                description,
-                style: AppTextStyles.bodyMedium.copyWith(
-                  color: Colors.grey[400],
-                ),
-              ),
-            ],
-          ),
+            ),
+            if (isSelected)
+              const Icon(Icons.check_circle, color: AppColors.gold, size: 32),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildPlayerSelection(GameProvider gameProvider) {
+  // ==================== STEP 2: JOGADORES ====================
+  Widget _buildJogadoresStep(GameProvider gameProvider) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Quem vai jogar?', style: AppTextStyles.heading2),
+              Text('Selecione os Jogadores', style: AppTextStyles.heading2),
               const SizedBox(height: 8),
               Text(
-                'Selecione no mínimo 2 jogadores',
-                style: AppTextStyles.bodyMedium.copyWith(color: Colors.grey),
+                'Mínimo 2 jogadores',
+                style: AppTextStyles.caption.copyWith(color: Colors.white70),
               ),
             ],
           ),
         ),
         Expanded(
           child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             itemCount: _allUsers.length,
             itemBuilder: (context, index) {
               final user = _allUsers[index];
               final isSelected = gameProvider.isPlayerSelected(user);
 
               return Card(
+                color: isSelected
+                    ? AppColors.primary
+                    : AppColors.cardBackground,
                 margin: const EdgeInsets.only(bottom: 12),
-                child: CheckboxListTile(
-                  value: isSelected,
-                  onChanged: (value) {
-                    gameProvider.togglePlayerSelection(user);
-                  },
-                  title: Text(user.username, style: AppTextStyles.heading3),
-                  subtitle: Text(
-                    'Nível ${user.level} • ${user.totalWins} vitórias',
-                    style: AppTextStyles.caption,
-                  ),
-                  secondary: CircleAvatar(
-                    backgroundColor: AppColors.primary,
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: isSelected
+                        ? AppColors.gold
+                        : AppColors.primary,
                     child: Text(
                       user.username[0].toUpperCase(),
-                      style: AppTextStyles.bodyLarge,
+                      style: TextStyle(
+                        color: isSelected ? Colors.black : Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                  activeColor: AppColors.gold,
+                  title: Text(
+                    user.username,
+                    style: AppTextStyles.bodyLarge.copyWith(
+                      color: Colors.white,
+                    ),
+                  ),
+                  trailing: Checkbox(
+                    value: isSelected,
+                    onChanged: (value) {
+                      gameProvider.togglePlayerSelection(user);
+                    },
+                    activeColor: AppColors.gold,
+                  ),
+                  onTap: () {
+                    gameProvider.togglePlayerSelection(user);
+                  },
                 ),
               );
             },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            '${gameProvider.selectedPlayers.length} jogador(es) selecionado(s)',
+            style: AppTextStyles.bodyLarge.copyWith(
+              color: gameProvider.selectedPlayers.length >= 2
+                  ? AppColors.success
+                  : AppColors.error,
+            ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildBetConfiguration(GameProvider gameProvider) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Aposta em Dinheiro?', style: AppTextStyles.heading2),
-          const SizedBox(height: 24),
-
-          SwitchListTile(
-            value: gameProvider.hasMoneyBet,
-            onChanged: (value) => gameProvider.setMoneyBet(value),
-            title: Text(
-              gameProvider.hasMoneyBet
-                  ? 'Sim, vamos apostar dinheiro'
-                  : 'Não, apenas por diversão',
+  // ==================== STEP 3: FICHAS (RESTORED UI) ====================
+  Widget _buildFichasStep(GameProvider gameProvider) {
+    if (gameProvider.selectedPlayers.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.warning, size: 64, color: AppColors.warning),
+            const SizedBox(height: 16),
+            Text(
+              'Selecione pelo menos 1 jogador',
               style: AppTextStyles.heading3,
             ),
-            activeColor: AppColors.gold,
-            secondary: Icon(
-              gameProvider.hasMoneyBet
-                  ? Icons.attach_money
-                  : Icons.sports_esports,
-              color: AppColors.primary,
-              size: 32,
-            ),
-          ),
-
-          if (gameProvider.hasMoneyBet) ...[
-            const SizedBox(height: 24),
-            Text('Valor do Buy-in', style: AppTextStyles.bodyLarge),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _buyInController,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: 'Valor em R\$',
-                prefixText: 'R\$ ',
-                hintText: '50.00',
-              ),
-              onChanged: (value) {
-                final amount = double.tryParse(value) ?? 0.0;
-                gameProvider.setBuyInAmount(amount);
-              },
-            ),
           ],
-        ],
-      ),
-    );
-  }
+        ),
+      );
+    }
 
-  Widget _buildChipCalculation(GameProvider gameProvider) {
+    final playerCount = gameProvider.selectedPlayers.length;
+    final totalChipsPerPlayer = 200;
+    final chipsPerPlayer = totalChipsPerPlayer ~/ playerCount;
+
+    // Calculate chip distribution with proper ratios
+    final distribution = _calculateChipDistribution(chipsPerPlayer);
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Distribuição de Fichas', style: AppTextStyles.heading2),
-          const SizedBox(height: 8),
-          Text(
-            'Total de ${gameProvider.selectedPlayers.length} jogadores',
-            style: AppTextStyles.bodyMedium.copyWith(color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
-
-          if (gameProvider.calculatedChips == null)
-            ElevatedButton.icon(
-              onPressed: () => gameProvider.calculateChips(),
-              icon: const Icon(Icons.calculate),
-              label: const Text('Calcular Fichas'),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Main card with wine/maroon background and gold header
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF5A2D35), // Wine/Maroon color
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
-            )
-          else ...[
-            Card(
-              color: AppColors.primary,
               child: Padding(
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Header with icon and text
                     Row(
                       children: [
-                        const Icon(Icons.check_circle, color: AppColors.gold),
-                        const SizedBox(width: 8),
+                        const Icon(
+                          Icons.check_circle,
+                          color: AppColors.gold,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 12),
                         Text(
                           'Entregue para cada jogador:',
-                          style: AppTextStyles.heading3.copyWith(
+                          style: AppTextStyles.bodyLarge.copyWith(
                             color: AppColors.gold,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 16),
-                    _buildChipLine(
-                      'Brancas (R\$ 1)',
-                      gameProvider.calculatedChips!.whiteChips,
-                      AppColors.chipWhite,
+
+                    // Chip distribution rows
+                    _buildChipDistributionRow(
+                      'Brancas',
+                      distribution['white']!,
+                      const Color(0xFFF5F5F5), // White
                     ),
-                    _buildChipLine(
-                      'Vermelhas (R\$ 5)',
-                      gameProvider.calculatedChips!.redChips,
-                      AppColors.chipRed,
+                    const SizedBox(height: 12),
+                    _buildChipDistributionRow(
+                      'Vermelhas',
+                      distribution['red']!,
+                      const Color(0xFFD32F2F), // Red
                     ),
-                    _buildChipLine(
-                      'Verdes (R\$ 10)',
-                      gameProvider.calculatedChips!.greenChips,
-                      AppColors.chipGreen,
+                    const SizedBox(height: 12),
+                    _buildChipDistributionRow(
+                      'Verdes',
+                      distribution['green']!,
+                      const Color(0xFF388E3C), // Green
                     ),
-                    _buildChipLine(
-                      'Azuis (R\$ 25)',
-                      gameProvider.calculatedChips!.blueChips,
-                      AppColors.chipBlue,
+                    const SizedBox(height: 12),
+                    _buildChipDistributionRow(
+                      'Azuis',
+                      distribution['blue']!,
+                      const Color(0xFF1976D2), // Blue
                     ),
-                    _buildChipLine(
-                      'Pretas (R\$ 50)',
-                      gameProvider.calculatedChips!.blackChips,
-                      AppColors.chipBlack,
+                    const SizedBox(height: 12),
+                    _buildChipDistributionRow(
+                      'Pretas',
+                      distribution['black']!,
+                      const Color(0xFF424242), // Black/Dark
                     ),
-                    const Divider(color: Colors.white38, height: 24),
+
+                    const SizedBox(height: 16),
+
+                    // Divider
+                    Divider(color: AppColors.gold.withOpacity(0.3), height: 1),
+
+                    const SizedBox(height: 12),
+
+                    // Total row
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
                           'Total por jogador:',
                           style: AppTextStyles.bodyLarge.copyWith(
-                            fontWeight: FontWeight.bold,
+                            color: AppColors.gold,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                         Text(
-                          '${gameProvider.calculatedChips!.totalChips} fichas',
-                          style: AppTextStyles.bodyLarge.copyWith(
+                          '${distribution.values.reduce((a, b) => a + b)} fichas',
+                          style: AppTextStyles.heading3.copyWith(
                             color: AppColors.gold,
                             fontWeight: FontWeight.bold,
                           ),
@@ -449,97 +466,138 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
                 ),
               ),
             ),
-          ],
-        ],
-      ),
-    );
-  }
 
-  Widget _buildChipLine(String label, int count, Color color) {
-    if (count == 0) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 1),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(child: Text(label, style: AppTextStyles.bodyMedium)),
-          Text(
-            '$count',
-            style: AppTextStyles.bodyLarge.copyWith(
-              fontWeight: FontWeight.bold,
-              color: AppColors.gold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNavigationButtons(GameProvider gameProvider) {
-    final canProceed = _canProceedToNextStep(gameProvider);
-
-    return SafeArea(
-      top: false,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.darkGrey,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, -2),
-            ),
+            const SizedBox(height: 32),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Build a single row for chip distribution
+  /// Format: CircleAvatar(color) + Text("Brancas ($1)") + Spacer + Text("25", bold Yellow)
+  Widget _buildChipDistributionRow(String colorName, int count, Color color) {
+    return Row(
+      children: [
+        // Circle avatar with color
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color,
+            border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 2,
+                offset: const Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        // Color name text
+        Expanded(
+          child: Text(
+            colorName,
+            style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
+          ),
+        ),
+        // Chip count (bold, yellow)
+        Text(
+          '$count',
+          style: AppTextStyles.heading3.copyWith(
+            color: AppColors.gold,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Calculate chip distribution with proper ratios
+  /// Ratio: 30% White, 30% Red, 20% Green, 10% Blue, 10% Black
+  /// Example: 100 chips = 30 White, 30 Red, 20 Green, 10 Blue, 10 Black
+  Map<String, int> _calculateChipDistribution(int totalChips) {
+    int white = (totalChips * 0.30).round();
+    int red = (totalChips * 0.30).round();
+    int green = (totalChips * 0.20).round();
+    int blue = (totalChips * 0.10).round();
+    int black = (totalChips * 0.10).round();
+
+    // Adjust for rounding errors to ensure total = totalChips
+    final sum = white + red + green + blue + black;
+    final difference = totalChips - sum;
+
+    if (difference != 0) {
+      black += difference;
+    }
+
+    return {
+      'white': white,
+      'red': red,
+      'green': green,
+      'blue': blue,
+      'black': black,
+    };
+  }
+
+  // ==================== NAVIGATION BUTTONS ====================
+  Widget _buildNavigationButtons(GameProvider gameProvider) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.darkGrey,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(12),
+          topRight: Radius.circular(12),
+        ),
+      ),
+      child: SafeArea(
         child: Row(
           children: [
+            // Back button
             if (_currentStep > 0)
               Expanded(
-                child: OutlinedButton(
+                child: OutlinedButton.icon(
                   onPressed: () {
-                    setState(() {
-                      _currentStep--;
-                    });
+                    setState(() => _currentStep--);
                   },
-                  child: const Text('Voltar'),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Voltar'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.gold,
+                    side: const BorderSide(color: AppColors.gold),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
                 ),
-              ),
-            if (_currentStep > 0) const SizedBox(width: 16),
+              )
+            else
+              const Expanded(child: SizedBox.shrink()),
+            if (_currentStep > 0) const SizedBox(width: 12),
+            // Next/Start button
             Expanded(
-              flex: 2,
-              child: ElevatedButton(
-                onPressed: canProceed
-                    ? () async {
-                        if (_currentStep < 3) {
-                          setState(() {
-                            _currentStep++;
-                          });
-                        } else {
-                          // Start game
-                          await gameProvider.startGame();
-                          if (mounted) {
-                            Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const GameScreen(),
-                              ),
-                            );
-                          }
-                        }
-                      }
+              child: ElevatedButton.icon(
+                onPressed: _canProceedToNextStep(gameProvider)
+                    ? () => _proceedToNextStep(gameProvider)
                     : null,
-                child: Text(_currentStep == 3 ? 'Começar Jogo' : 'Próximo'),
+                icon: Icon(
+                  _currentStep == 2 ? Icons.play_arrow : Icons.arrow_forward,
+                ),
+                label: Text(
+                  _currentStep == 2 ? 'Começar Jogo' : 'Próximo',
+                  style: AppTextStyles.bodyLarge.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _currentStep == 2
+                      ? const Color(0xFF8B2635) // Wine/Red for start button
+                      : AppColors.primary,
+                  disabledBackgroundColor: AppColors.darkGrey,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
               ),
             ),
           ],
@@ -555,11 +613,45 @@ class _GameSetupScreenState extends State<GameSetupScreen> {
       case 1:
         return gameProvider.selectedPlayers.length >= 2;
       case 2:
-        return true; // Can always proceed from bet config
-      case 3:
-        return gameProvider.calculatedChips != null;
+        return true; // Always can start if we reach step 3
       default:
         return false;
+    }
+  }
+
+  Future<void> _proceedToNextStep(GameProvider gameProvider) async {
+    if (_currentStep < 2) {
+      setState(() => _currentStep++);
+    } else {
+      // Start the game
+      await _startGame(gameProvider);
+    }
+  }
+
+  Future<void> _startGame(GameProvider gameProvider) async {
+    try {
+      // Calculate chips based on selected players
+      gameProvider.calculateChips();
+
+      // Start the game session
+      await gameProvider.startGame();
+
+      // Navigate to game screen
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const GameScreen()),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao iniciar jogo: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
     }
   }
 }

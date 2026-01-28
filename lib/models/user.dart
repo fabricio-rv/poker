@@ -1,5 +1,3 @@
-import 'dart:math';
-
 class User {
   final String id;
   final String username;
@@ -21,31 +19,27 @@ class User {
     DateTime? joinDate,
   }) : joinDate = joinDate ?? DateTime.now();
 
-  /// Calculate level from XP using the formula: Level = sqrt(XP / 100)
+  /// Calculate level from XP using strict formula: Level = (TotalXP / 1000).floor() + 1
+  /// It takes exactly 1000 XP to advance to the next level
   int get level {
-    return sqrt(currentXP / 100).floor();
+    return (currentXP / 1000).floor() + 1;
   }
 
-  /// Calculate XP required for next level
+  /// Calculate XP required for next level (always 1000 XP per level)
   int get xpForNextLevel {
-    final nextLevel = level + 1;
-    return (nextLevel * nextLevel * 100);
+    return level * 1000;
   }
 
   /// Calculate XP required for current level
   int get xpForCurrentLevel {
-    return (level * level * 100);
+    return (level - 1) * 1000;
   }
 
   /// Calculate progress percentage to next level
+  /// Formula: (TotalXP % 1000) / 1000
   double get progressToNextLevel {
-    final currentLevelXP = xpForCurrentLevel;
-    final nextLevelXP = xpForNextLevel;
-    final xpInCurrentLevel = currentXP - currentLevelXP;
-    final xpNeededForLevel = nextLevelXP - currentLevelXP;
-
-    if (xpNeededForLevel == 0) return 0.0;
-    return (xpInCurrentLevel / xpNeededForLevel).clamp(0.0, 1.0);
+    final xpInCurrentLevel = currentXP % 1000;
+    return xpInCurrentLevel / 1000.0;
   }
 
   /// Calculate overall ranking score

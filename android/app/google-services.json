@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "794254645766",
+    "project_id": "poker-f74e3",
+    "storage_bucket": "poker-f74e3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:794254645766:android:8176a30d0f973252f40187",
+        "android_client_info": {
+          "package_name": "com.example.poker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA5gELz3A1HPhx1UDAmUj--_Hk-w-89BxI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -175,6 +175,39 @@ class UserProvider with ChangeNotifier {
     }
   }
 
+  /// TASK 1: Complete a match with strict XP rewards
+  /// Winner: +500 XP, increment victories and matchesPlayed
+  /// Loser: +100 XP (participation), increment matchesPlayed only
+  Future<void> completeMatch({required bool isWinner}) async {
+    if (currentUser == null) return;
+
+    try {
+      // Calculate XP reward based on result
+      final xpReward = isWinner ? 500 : 100;
+      final newXP = currentUser!.currentXP + xpReward;
+      final newWins = isWinner
+          ? currentUser!.totalWins + 1
+          : currentUser!.totalWins;
+      final newMatches = currentUser!.totalMatches + 1;
+
+      // Create updated user with new stats
+      final updatedUser = currentUser!.copyWith(
+        currentXP: newXP,
+        totalWins: newWins,
+        totalMatches: newMatches,
+      );
+
+      // Update via auth service
+      await _authService.updateUser(updatedUser);
+
+      // Notify listeners to update UI immediately
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = 'Erro ao registrar partida: $e';
+      notifyListeners();
+    }
+  }
+
   /// Clear error message
   void clearError() {
     _errorMessage = null;

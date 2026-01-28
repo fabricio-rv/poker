@@ -7,6 +7,7 @@ import '../models/chip_config.dart';
 import '../models/user.dart';
 import '../services/game_service.dart';
 import '../services/chip_calculator_service.dart';
+import '../services/poker_logic_service.dart';
 
 /// Provider principal para gerenciamento de estado do jogo de poker
 /// Implementa toda a lógica de temporização, blinds, eliminação e rebuys
@@ -49,6 +50,8 @@ class GameProvider with ChangeNotifier {
 
   // Multiplayer específico
   double _winProbability = 0.0;
+  bool _isHost =
+      true; // true = Host (Manager Mode), false = Guest (Player Mode)
 
   // ========== Getters ==========
   GameMode? get selectedMode => _selectedMode;
@@ -66,6 +69,7 @@ class GameProvider with ChangeNotifier {
   int get currentBigBlind => _currentBigBlind;
   int get dealerIndex => _dealerIndex;
   double get winProbability => _winProbability;
+  bool get isHost => _isHost;
 
   bool get isGameActive => _currentGame != null;
   bool get isGameFinished => _currentGame?.isFinished ?? false;
@@ -96,6 +100,11 @@ class GameProvider with ChangeNotifier {
 
   void selectMode(GameMode mode) {
     _selectedMode = mode;
+    notifyListeners();
+  }
+
+  void setIsHost(bool isHost) {
+    _isHost = isHost;
     notifyListeners();
   }
 
@@ -365,7 +374,8 @@ class GameProvider with ChangeNotifier {
   }
 
   /// Calcula a probabilidade de vitória usando simulação Monte Carlo
-  /// Simula 300 mãos aleatórias do oponente contra a mão atual do jogador
+  /// Simula 600 mãos aleatórias do oponente contra a mão atual do jogador
+  /// Usa a avaliação real de mãos de poker (não apenas high cards)
   void calculateWinProbability({
     required List<String> playerCards,
     required List<String> boardCards,
@@ -392,16 +402,23 @@ class GameProvider with ChangeNotifier {
     }
   }
 
-  /// Método interno que executa a simulação Monte Carlo
+  /// Método interno que executa a simulação Monte Carlo com avaliação real de mãos
+  /// Algoritmo:
+  /// 1. Cria um deck fresco excluindo as cartas do jogador e da mesa
+  /// 2. Para cada iteração:
+  ///    a. Sorteia 2 cartas para o oponente
+  ///    b. Completa a mesa para 5 cartas se necessário
+  ///    c. Avalia a mão do jogador e do oponente
+  ///    d. Compara: Win se jogador > oponente, Loss se < , Tie se ==
+  /// 3. Calcula: winRate = wins / 600
   void _updateProbability(List<String> playerCards, List<String> boardCards) {
-    const int simulations = 300;
+    const int simulations = 600;
     int wins = 0;
-    int ties = 0;
 
     // Cartas usadas (não podem ser sorteadas para oponente)
     final usedCards = <String>{...playerCards, ...boardCards};
 
-    // Deck completo (52 cartas)
+    // Deck completo (52 cartas) - mantém a ordem padronizada
     final ranks = [
       'A',
       'K',
@@ -425,79 +442,67 @@ class GameProvider with ChangeNotifier {
       }
     }
 
-    // Cartas disponíveis para sortear
+    // Cartas disponíveis para sortear (excluindo usadas)
     final availableCards = fullDeck
         .where((c) => !usedCards.contains(c))
         .toList();
 
-    // Quantas cartas faltam na mesa?
+    // Quantas cartas faltam na mesa para completar 5?
     final missingBoardCards = 5 - boardCards.length;
 
-    // Simulação Monte Carlo
+    // Instância do serviço de lógica de poker para avaliação real
+    final pokerLogic = PokerLogicService();
+
+    // Simulação Monte Carlo - 600 iterações
     for (int i = 0; i < simulations; i++) {
-      // Embaralhar cartas disponíveis
+      // Embaralhar cartas disponíveis para esta iteração
       final shuffled = List<String>.from(availableCards)..shuffle();
 
       // Sortear 2 cartas para oponente
       final opponentCards = shuffled.take(2).toList();
 
-      // Completar a mesa se necessário
+      // Completar a mesa se necessário (se temos turn/river incompleto)
       final completedBoard = List<String>.from(boardCards);
       if (missingBoardCards > 0) {
         completedBoard.addAll(shuffled.skip(2).take(missingBoardCards));
       }
 
-      // Comparar mãos (simplificado - usando valor de rank como proxy)
-      final playerScore = _evaluateHandScore(playerCards, completedBoard);
-      final opponentScore = _evaluateHandScore(opponentCards, completedBoard);
+      try {
+        // Avaliar mão do jogador com a mesa completa
+        final myEval = pokerLogic.evaluateHand(
+          playerName: 'Player',
+          playerCards: playerCards,
+          boardCards: completedBoard,
+        );
 
-      if (playerScore > opponentScore) {
-        wins++;
-      } else if (playerScore == opponentScore) {
-        ties++;
+        // Avaliar mão do oponente com a MESMA mesa
+        // CRITICAL: Oponente usa as mesmas 5 cartas da mesa (não cartas diferentes)
+        final opponentEval = pokerLogic.evaluateHand(
+          playerName: 'Opponent',
+          playerCards: opponentCards,
+          boardCards: completedBoard,
+        );
+
+        // Comparar mãos usando o comparador correto
+        // compareHands retorna: > 0 se A vence, < 0 se B vence, 0 se empate
+        final comparisonResult = pokerLogic.compareHands(myEval, opponentEval);
+
+        // CRITICAL: Contar APENAS vitórias (não empates como 0.5)
+        if (comparisonResult > 0) {
+          wins++;
+        }
+        // Se comparisonResult == 0 (empate), não contamos como win
+        // Se comparisonResult < 0 (derrota), também não contamos
+      } catch (e) {
+        debugPrint('Erro na iteração $i da simulação: $e');
+        // Continua a simulação em caso de erro
+        continue;
       }
     }
 
-    // Calcular porcentagem (empates contam como 0.5)
-    _winProbability = ((wins + (ties * 0.5)) / simulations) * 100;
+    // Calcular porcentagem de vitórias (sem contar empates como wins)
+    _winProbability = (wins / simulations) * 100;
     notifyListeners();
-  }
-
-  /// Avaliação simplificada de força da mão
-  /// Retorna um score baseado nas cartas mais altas
-  int _evaluateHandScore(List<String> hand, List<String> board) {
-    final allCards = [...hand, ...board];
-    final rankValues = {
-      'A': 14,
-      'K': 13,
-      'Q': 12,
-      'J': 11,
-      'T': 10,
-      '9': 9,
-      '8': 8,
-      '7': 7,
-      '6': 6,
-      '5': 5,
-      '4': 4,
-      '3': 3,
-      '2': 2,
-    };
-
-    // Extrair ranks e ordenar
-    final ranks =
-        allCards
-            .map((c) => c.substring(0, c.length - 1))
-            .map((r) => rankValues[r] ?? 0)
-            .toList()
-          ..sort((a, b) => b.compareTo(a));
-
-    // Score baseado nas 5 cartas mais altas
-    int score = 0;
-    for (int i = 0; i < 5 && i < ranks.length; i++) {
-      score += ranks[i] * (100 - i * 10); // Peso decrescente
-    }
-
-    return score;
   }
 
   void mockCalculateOdds() {
